@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'screens/login_screen.dart';
 import 'screens/staff/staff_home_screen.dart';
+import 'screens/admin/admin_home_screen.dart';
+import 'screens/admin/admin_leave_screen.dart';
+import 'screens/admin/admin_profile_screen.dart';
 
 void main() {
   runApp(MAMSApp());
@@ -20,19 +23,10 @@ class MAMSApp extends StatelessWidget {
       routes: {
         '/': (context) => LoginScreen(),
         '/staffHome': (context) => StaffHomeScreen(),
-        '/adminHome': (context) => AdminHomeScreen(),
+        '/adminHome': (context) => const AdminHomeScreen(),
+        '/adminLeave': (context) => const AdminLeaveScreen(),
+        '/adminProfile': (context) => const AdminProfileScreen(),
       },
-    );
-  }
-}
-
-// Admin Home Screen
-class AdminHomeScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Admin Home')),
-      body: Center(child: Text('Admin Screens rah sitok')),
     );
   }
 }
