@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "759720863080",
+    "project_id": "mams-dev-7e9b8",
+    "storage_bucket": "mams-dev-7e9b8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:759720863080:android:3851b7009fb21249c0e2dd",
+        "android_client_info": {
+          "package_name": "com.example.mams"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChNvfb8pi1kmuAsZXxhF1uACFD6oEArmo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

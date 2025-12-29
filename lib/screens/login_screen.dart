@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -10,8 +12,11 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   String role = 'Staff'; // Default role
   bool _obscurePassword = true;
+  bool _isLoading = false;
   late TextEditingController _idController;
   late TextEditingController _passwordController;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   @override
   void initState() {
@@ -27,7 +32,46 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _login() {
+  Future<String?> _lookupEmailForId(String idInput) async {
+    final trimmed = idInput.trim();
+    final numericId = int.tryParse(trimmed);
+
+    // Helper to query a collection name (handles case differences like users/Users)
+    Future<QuerySnapshot<Map<String, dynamic>>> _q(
+      String collection,
+      String field,
+      dynamic value,
+    ) {
+      return _firestore.collection(collection).where(field, isEqualTo: value).limit(1).get();
+    }
+
+    // Try both numeric and string matches for staffId/adminId
+    final List<Future<QuerySnapshot<Map<String, dynamic>>>> queries = [];
+    if (numericId != null) {
+      for (final col in ['users', 'Users']) {
+        queries.add(_q(col, 'staffId', numericId));
+        queries.add(_q(col, 'adminId', numericId));
+      }
+    }
+    // Fallback to string match in case IDs are stored as strings
+    for (final col in ['users', 'Users']) {
+      queries.add(_q(col, 'staffId', trimmed));
+      queries.add(_q(col, 'adminId', trimmed));
+    }
+
+    for (final future in queries) {
+      final snap = await future;
+      if (snap.docs.isNotEmpty) {
+        final data = snap.docs.first.data();
+        if (data['email'] is String && (data['email'] as String).isNotEmpty) {
+          return (data['email'] as String).trim();
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<void> _login() async {
     if (_idController.text.isEmpty || _passwordController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all fields')),
@@ -35,11 +79,61 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // Navigate based on role
-    if (role == 'Staff') {
-      Navigator.pushReplacementNamed(context, '/staffHome');
-    } else {
-      Navigator.pushReplacementNamed(context, '/adminHome');
+    setState(() => _isLoading = true);
+
+    try {
+      // Resolve email from staffId/adminId
+      final resolvedEmail = await _lookupEmailForId(_idController.text.trim());
+      if (resolvedEmail == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('User ID not found. Please check with admin.'),
+        ));
+        return;
+      }
+
+      final credential = await _auth.signInWithEmailAndPassword(
+        email: resolvedEmail,
+        password: _passwordController.text,
+      );
+
+      // Fetch role from Firestore users collection if present
+      String resolvedRole = role; // fallback to UI toggle
+      final userDoc = await _firestore
+          .collection('users')
+          .doc(credential.user?.uid)
+          .get();
+      if (userDoc.exists && userDoc.data() != null) {
+        final data = userDoc.data()!;
+        if (data['role'] is String && (data['role'] as String).isNotEmpty) {
+          resolvedRole = (data['role'] as String).trim();
+        }
+      }
+
+      if (!mounted) return;
+      if (resolvedRole.toLowerCase() == 'admin') {
+        Navigator.pushReplacementNamed(context, '/adminHome');
+      } else {
+        Navigator.pushReplacementNamed(context, '/staffHome');
+      }
+    } on FirebaseAuthException catch (e) {
+      String message = 'Login failed. Please check your credentials.';
+      if (e.code == 'user-not-found') {
+        message = 'No user found for that email/ID.';
+      } else if (e.code == 'wrong-password') {
+        message = 'Incorrect password.';
+      } else if (e.code == 'invalid-email') {
+        message = 'Invalid email/ID format.';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(message),
+      ));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Unexpected error: ${e.toString()}'),
+      ));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -326,9 +420,21 @@ class _LoginScreenState extends State<LoginScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton.icon(
-                              icon: const Icon(Icons.login),
-                              label: const Text('Sign In'),
-                              onPressed: _login,
+                              icon: _isLoading
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          Colors.black,
+                                        ),
+                                      ),
+                                    )
+                                  : const Icon(Icons.login),
+                              label: Text(_isLoading ? 'Signing In...' : 'Sign In'),
+                              onPressed: _isLoading ? null : _login,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.yellow[600],
                                 foregroundColor: Colors.black,
