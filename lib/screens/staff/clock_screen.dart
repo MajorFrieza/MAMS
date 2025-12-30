@@ -6,6 +6,7 @@ import '../../models/attendance_record.dart';
 import '../../services/location_service.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:geolocator/geolocator.dart';
 
 class ClockScreen extends StatefulWidget {
   const ClockScreen({super.key});
@@ -19,11 +20,18 @@ class _ClockScreenState extends State<ClockScreen> {
   late String _currentDate;
   Timer? _timer;
   bool checkedIn = false;
+  bool _geoAllowed = false;
+  bool _checkingGeo = true;
+  String _geoMessage = 'Checking location...';
   AttendanceRecord? _todayAttendance;
   final AttendanceDatabase _attendanceDb = AttendanceDatabase();
   bool _showSummary = false;
   String _currentLocation = "Loading location...";
   bool _loadingLocation = true;
+  // replace with with Mutiara lat long
+  static const double _officeLat = 1.468461;
+  static const double _officeLng = 110.454651;
+  static const double _allowedRadiusMeters = 150;
 
   @override
   void initState() {
@@ -33,6 +41,7 @@ class _ClockScreenState extends State<ClockScreen> {
     _timer = Timer.periodic(Duration(seconds: 1), (_) => _updateDateTime());
     _loadTodayAttendance();
     _loadCurrentLocation();
+    _refreshGeofence();
   }
 
   Future<void> _loadTodayAttendance() async {
@@ -187,6 +196,9 @@ class _ClockScreenState extends State<ClockScreen> {
   }
 
   Future<void> _checkIn() async {
+    await _refreshGeofence();
+    if (!_geoAllowed) return;
+
     // Request location permission before checking in
     await LocationService.instance.requestLocationPermission();
 
@@ -225,6 +237,9 @@ class _ClockScreenState extends State<ClockScreen> {
   }
 
   Future<void> _checkOut() async {
+    await _refreshGeofence();
+    if (!_geoAllowed) return;
+
     // Request location permission before checking out
     await LocationService.instance.requestLocationPermission();
 
@@ -258,6 +273,51 @@ class _ClockScreenState extends State<ClockScreen> {
       setState(() {
         checkedIn = false;
         _showSummary = true;
+      });
+    }
+  }
+
+  Future<void> _refreshGeofence() async {
+    setState(() {
+      _checkingGeo = true;
+      _geoMessage = 'Checking location...';
+    });
+    try {
+      final pos = await LocationService.instance.getCurrentPosition();
+      if (pos == null) {
+        if (!mounted) return;
+        setState(() {
+          _geoAllowed = false;
+          _geoMessage =
+              'Location unavailable or permission denied. Enable location and try again.';
+          _checkingGeo = false;
+        });
+        return;
+      }
+      final distance = Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        _officeLat,
+        _officeLng,
+      );
+      final allowed = distance <= _allowedRadiusMeters;
+      debugPrint(
+        'Geofence check -> device: (${pos.latitude}, ${pos.longitude}), office: ($_officeLat, $_officeLng), distance: ${distance.toStringAsFixed(2)}m, allowed <= $_allowedRadiusMeters',
+      );
+      if (!mounted) return;
+      setState(() {
+        _geoAllowed = allowed;
+        _geoMessage = allowed
+            ? 'Within office geofence'
+            : 'Outside office geofence. Move closer to clock in/out.';
+        _checkingGeo = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _geoAllowed = false;
+        _geoMessage = 'Error checking location. Please retry.';
+        _checkingGeo = false;
       });
     }
   }
@@ -380,40 +440,79 @@ class _ClockScreenState extends State<ClockScreen> {
 
                       SizedBox(height: 20),
 
-                      // Check In / Check Out Buttons
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: checkedIn ? null : _checkIn,
-                              icon: Icon(Icons.camera_alt),
-                              label: Text("Check In"),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: checkedIn
-                                    ? Colors.grey[400]
-                                    : Colors.green,
-                                padding: EdgeInsets.symmetric(vertical: 16),
-                                textStyle: TextStyle(fontSize: 16),
-                              ),
+                      // Geofence status + Check In / Out
+                      if (_checkingGeo)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else ...[
+                        if (!_geoAllowed)
+                          Container(
+                            width: double.infinity,
+                            padding: EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red[50],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.red[200]!),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.location_off, color: Colors.red[700]),
+                                SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _geoMessage,
+                                    style: TextStyle(
+                                      color: Colors.red[700],
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: Icon(Icons.refresh, color: Colors.red[700]),
+                                  onPressed: _refreshGeofence,
+                                ),
+                              ],
                             ),
                           ),
-                          SizedBox(width: 10),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: checkedIn ? _checkOut : null,
-                              icon: Icon(Icons.camera_alt),
-                              label: Text("Check Out"),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: checkedIn
-                                    ? Colors.red[600]
-                                    : Colors.grey[300],
-                                padding: EdgeInsets.symmetric(vertical: 16),
-                                textStyle: TextStyle(fontSize: 16),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed:
+                                    (_geoAllowed && !checkedIn) ? _checkIn : null,
+                                icon: Icon(Icons.camera_alt),
+                                label: Text("Check In"),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: checkedIn
+                                      ? Colors.grey[400]
+                                      : (_geoAllowed ? Colors.green : Colors.grey[300]),
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  textStyle: TextStyle(fontSize: 16),
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed:
+                                    (_geoAllowed && checkedIn) ? _checkOut : null,
+                                icon: Icon(Icons.camera_alt),
+                                label: Text("Check Out"),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: checkedIn
+                                      ? Colors.red[600]
+                                      : Colors.grey[300],
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  textStyle: TextStyle(fontSize: 16),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
 
                       SizedBox(height: 20),
 
