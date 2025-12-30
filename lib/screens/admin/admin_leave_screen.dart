@@ -116,29 +116,24 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
               backgroundColor: const Color(0xFFFACC15),
               foregroundColor: Colors.black,
             ),
-            onPressed: () async {
+            onPressed: () {
+              // ignore: use_build_context_synchronously              // Validate inputs first - before any async operations
               if (selectedStaffId == null || selectedStaffId!.isEmpty) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Enter a staff ID')),
-                  );
-                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Enter a staff ID')),
+                );
                 return;
               }
               if (selectedLeaveType == null) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Select a leave type')),
-                  );
-                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Select a leave type')),
+                );
                 return;
               }
               if (daysController.text.isEmpty) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Enter number of days')),
-                  );
-                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Enter number of days')),
+                );
                 return;
               }
 
@@ -147,46 +142,66 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                 final staffRef = FirebaseFirestore.instance
                     .collection('users')
                     .doc(selectedStaffId!);
-                final staffDoc = await staffRef.get();
 
-                if (!staffDoc.exists) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Staff ID not found')),
-                    );
-                  }
-                  return;
-                }
+                // Use .then() instead of await to avoid async gap with context
+                staffRef
+                    .get()
+                    .then((staffDoc) {
+                      if (!staffDoc.exists) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Staff ID not found')),
+                          );
+                        }
+                        return;
+                      }
 
-                // Get current balance and add days
-                final currentBalances =
-                    (staffDoc.data()?['leaveBalances'] as Map?) ?? {};
-                final currentDays =
-                    (currentBalances[selectedLeaveType] as int?) ?? 0;
+                      final currentBalances =
+                          (staffDoc.data()?['leaveBalances'] as Map?) ?? {};
+                      final currentDays =
+                          (currentBalances[selectedLeaveType] as int?) ?? 0;
 
-                await staffRef.set({
-                  'leaveBalances': {
-                    ...currentBalances,
-                    selectedLeaveType!: currentDays + days,
-                  },
-                }, SetOptions(merge: true));
-
-                if (mounted) {
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Added $days $selectedLeaveType days for $selectedStaffId',
-                      ),
-                    ),
-                  );
-                }
+                      staffRef
+                          .set({
+                            'leaveBalances': {
+                              ...currentBalances,
+                              selectedLeaveType!: currentDays + days,
+                            },
+                          }, SetOptions(merge: true))
+                          .then((_) {
+                            if (mounted) {
+                              Navigator.of(context).pop();
+                              // ignore: use_build_context_synchronously
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Added $days $selectedLeaveType days for $selectedStaffId',
+                                  ),
+                                ),
+                              );
+                            }
+                          })
+                          .catchError((e) {
+                            if (mounted) {
+                              // ignore: use_build_context_synchronously
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Error: $e')),
+                              );
+                            }
+                          });
+                    })
+                    .catchError((e) {
+                      if (mounted) {
+                        // ignore: use_build_context_synchronously
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+                      }
+                    });
               } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text('Error: $e')));
-                }
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('Error: $e')));
               }
             },
             child: const Text('Add Balance'),

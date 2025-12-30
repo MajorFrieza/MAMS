@@ -28,6 +28,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
   Map<String, int> leaveBalances = {'Annual': 0, 'Compassionate': 0};
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _leaveSub;
+  StreamSubscription? _balanceSub; // Real-time balance updates
 
   Future<void> _pickFile() async {
     try {
@@ -847,6 +848,23 @@ class _LeaveScreenState extends State<LeaveScreen> {
       });
     }
 
+    // Real-time listener for balance updates
+    _balanceSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen((doc) {
+          if (mounted) {
+            final balances = (doc.data()?['leaveBalances'] as Map?) ?? {};
+            setState(() {
+              leaveBalances = {
+                'Annual': (balances['Annual'] as int?) ?? 1,
+                'Compassionate': (balances['Compassionate'] as int?) ?? 1,
+              };
+            });
+          }
+        });
+
     // subscribe to leaveRequests collection for this user
     _leaveSub = FirebaseFirestore.instance
         .collection('users')
@@ -899,6 +917,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
   @override
   void dispose() {
     _leaveSub?.cancel();
+    _balanceSub?.cancel();
     super.dispose();
   }
 }
