@@ -5,8 +5,10 @@ import 'notifications_screen.dart';
 import 'profile_screen.dart';
 
 class StaffHomeScreen extends StatefulWidget {
+  const StaffHomeScreen({super.key});
+
   @override
-  _StaffHomeScreenState createState() => _StaffHomeScreenState();
+  State<StaffHomeScreen> createState() => _StaffHomeScreenState();
 }
 
 class _StaffHomeScreenState extends State<StaffHomeScreen> {

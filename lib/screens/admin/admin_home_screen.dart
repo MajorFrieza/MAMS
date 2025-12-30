@@ -8,7 +8,8 @@ class AdminHomeScreen extends StatefulWidget {
 }
 
 class _AdminHomeScreenState extends State<AdminHomeScreen> {
-  int _currentIndex = 0;
+  final int _currentIndex = 0;
+  String? _selectedFilter; // Track which status filter is selected
 
   static const _textGreen600 = Color(0xFF16A34A);
   static const _bgRed50 = Color(0xFFFEF2F2);
@@ -23,7 +24,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       'label': 'Present Today',
       'icon': Icons.check_circle,
       'iconColor': _textGreen600,
-      'background': Colors.green.withOpacity(0.1),
+      'background': Colors.green.withValues(alpha: 0.1),
     },
     {
       'value': '5',
@@ -37,16 +38,12 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       'label': 'Late Today',
       'icon': Icons.access_time,
       'iconColor': Colors.orange,
-      'background': _brandYellow.withOpacity(0.18),
+      'background': _brandYellow.withValues(alpha: 0.18),
     },
   ];
 
   final List<Map<String, String>> _employees = [
-    {
-      'name': 'Emily Davis',
-      'status': 'Absent',
-      'note': 'No check-in recorded',
-    },
+    {'name': 'Emily Davis', 'status': 'Absent', 'note': 'No check-in recorded'},
     {
       'name': 'David Thompson',
       'status': 'Absent',
@@ -57,11 +54,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       'status': 'Absent',
       'note': 'No check-in recorded',
     },
-    {
-      'name': 'Tom Wilson',
-      'status': 'Absent',
-      'note': 'No check-in recorded',
-    },
+    {'name': 'Tom Wilson', 'status': 'Absent', 'note': 'No check-in recorded'},
     {
       'name': 'Anna Martinez',
       'status': 'Absent',
@@ -77,11 +70,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       'status': 'Late',
       'note': 'Check-in: 09:15 AM  •  15 min late',
     },
-    {
-      'name': 'John Smith',
-      'status': 'Present',
-      'note': 'Check-in: 08:45 AM',
-    },
+    {'name': 'John Smith', 'status': 'Present', 'note': 'Check-in: 08:45 AM'},
     {
       'name': 'Sarah Williams',
       'status': 'Present',
@@ -130,10 +119,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
               const SizedBox(height: 4),
               Text(
                 'December 1, 2025',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey[700],
-                ),
+                style: TextStyle(fontSize: 14, color: Colors.grey[700]),
               ),
               const SizedBox(height: 20),
               GridView.builder(
@@ -148,12 +134,34 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                 ),
                 itemBuilder: (context, index) {
                   final item = _summaryCards[index];
-                  return _SummaryCard(
-                    value: item['value'] as String,
-                    label: item['label'] as String,
-                    icon: item['icon'] as IconData,
-                    iconColor: item['iconColor'] as Color,
-                    background: item['background'] as Color,
+                  final label = item['label'] as String;
+                  final statusFilter = label.contains('Present')
+                      ? 'Present'
+                      : label.contains('Absent')
+                      ? 'Absent'
+                      : label.contains('Late')
+                      ? 'Late'
+                      : null;
+                  final isSelected = _selectedFilter == statusFilter;
+
+                  return GestureDetector(
+                    onTap: statusFilter != null
+                        ? () {
+                            setState(() {
+                              _selectedFilter = _selectedFilter == statusFilter
+                                  ? null
+                                  : statusFilter;
+                            });
+                          }
+                        : null,
+                    child: _SummaryCard(
+                      value: item['value'] as String,
+                      label: item['label'] as String,
+                      icon: item['icon'] as IconData,
+                      iconColor: item['iconColor'] as Color,
+                      background: item['background'] as Color,
+                      isSelected: isSelected,
+                    ),
                   );
                 },
               ),
@@ -173,27 +181,56 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                       children: [
                         Icon(Icons.groups, color: Colors.grey[800]),
                         const SizedBox(width: 8),
-                        Text(
-                          'All Employees (${_employees.length})',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
+                        Expanded(
+                          child: Text(
+                            _selectedFilter != null
+                                ? '$_selectedFilter Employees (${_employees.where((e) => e['status'] == _selectedFilter).length})'
+                                : 'All Employees (${_employees.length})',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
+                        if (_selectedFilter != null)
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedFilter = null;
+                              });
+                            },
+                            child: Text(
+                              'Clear',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue[600],
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 16),
                     ListView.separated(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _employees.length,
+                      itemCount: _selectedFilter != null
+                          ? _employees
+                                .where((e) => e['status'] == _selectedFilter)
+                                .length
+                          : _employees.length,
                       separatorBuilder: (_, __) => Divider(
                         height: 16,
                         thickness: 1,
                         color: Colors.grey[200],
                       ),
                       itemBuilder: (context, index) {
-                        final employee = _employees[index];
+                        final filteredEmployees = _selectedFilter != null
+                            ? _employees
+                                  .where((e) => e['status'] == _selectedFilter)
+                                  .toList()
+                            : _employees;
+                        final employee = filteredEmployees[index];
                         return _EmployeeTile(
                           name: employee['name']!,
                           status: employee['status']!,
@@ -224,10 +261,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             icon: Icon(Icons.calendar_month),
             label: 'Leave',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: 'Profile',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
         ],
       ),
     );
@@ -241,6 +275,7 @@ class _SummaryCard extends StatelessWidget {
     required this.icon,
     required this.iconColor,
     required this.background,
+    this.isSelected = false,
   });
 
   final String value;
@@ -248,6 +283,7 @@ class _SummaryCard extends StatelessWidget {
   final IconData icon;
   final Color iconColor;
   final Color background;
+  final bool isSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -255,7 +291,19 @@ class _SummaryCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(
+          color: isSelected ? Colors.blue[600]! : Colors.grey[300]!,
+          width: isSelected ? 2 : 1,
+        ),
+        boxShadow: isSelected
+            ? [
+                BoxShadow(
+                  color: Colors.blue.withValues(alpha: 0.2),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
       ),
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -272,19 +320,10 @@ class _SummaryCard extends StatelessWidget {
           const SizedBox(height: 14),
           Text(
             value,
-            style: const TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w700,
-            ),
+            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.grey[700],
-            ),
-          ),
+          Text(label, style: TextStyle(fontSize: 13, color: Colors.grey[700])),
         ],
       ),
     );
@@ -318,9 +357,9 @@ class _EmployeeTile extends StatelessWidget {
   Color _statusBackground() {
     switch (status.toLowerCase()) {
       case 'present':
-        return Colors.green.withOpacity(0.1);
+        return Colors.green.withValues(alpha: 0.1);
       case 'late':
-        return _AdminHomeScreenState._brandYellow.withOpacity(0.2);
+        return _AdminHomeScreenState._brandYellow.withValues(alpha: 0.2);
       case 'pending':
         return _AdminHomeScreenState._bgBlue50;
       default:
@@ -336,8 +375,8 @@ class _EmployeeTile extends StatelessWidget {
     final iconData = lowerStatus == 'present'
         ? Icons.check_circle
         : lowerStatus == 'late'
-            ? Icons.access_time
-            : Icons.cancel;
+        ? Icons.access_time
+        : Icons.cancel;
     return Row(
       children: [
         CircleAvatar(
@@ -360,10 +399,7 @@ class _EmployeeTile extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 note,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
             ],
           ),
@@ -373,7 +409,7 @@ class _EmployeeTile extends StatelessWidget {
           decoration: BoxDecoration(
             color: statusBg,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: statusColor.withOpacity(0.4)),
+            border: Border.all(color: statusColor.withValues(alpha: 0.4)),
           ),
           child: Text(
             status,

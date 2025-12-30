@@ -9,13 +9,13 @@ import 'screens/admin/admin_profile_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(MAMSApp());
 }
 
 class MAMSApp extends StatelessWidget {
+  const MAMSApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

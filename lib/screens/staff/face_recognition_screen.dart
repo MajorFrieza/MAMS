@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../services/face_recognition_service.dart';
 import '../../models/attendance_record.dart';
 import '../../services/attendance_database.dart';
@@ -9,12 +10,13 @@ class FaceRecognitionScreen extends StatefulWidget {
   final String location;
 
   const FaceRecognitionScreen({
+    super.key,
     required this.attendanceType,
     required this.location,
   });
 
   @override
-  _FaceRecognitionScreenState createState() => _FaceRecognitionScreenState();
+  State<FaceRecognitionScreen> createState() => _FaceRecognitionScreenState();
 }
 
 class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
@@ -30,6 +32,7 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
   bool _processingComplete = false;
   bool _isSuccess = false;
   bool _isDisposed = false;
+  bool _isCapturing = false; // Prevent concurrent camera captures
 
   @override
   void initState() {
@@ -39,6 +42,16 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
 
   Future<void> _initializeCamera() async {
     try {
+      // Request camera permission at runtime
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Camera permission is required')),
+          );
+        }
+        return;
+      }
       final cameras = await availableCameras();
       final frontCamera = cameras.firstWhere(
         (camera) => camera.lensDirection == CameraLensDirection.front,
@@ -58,7 +71,6 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
         _monitorFaceDetection();
       }
     } catch (e) {
-      print('Error initializing camera: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: Could not access camera')),
@@ -77,8 +89,19 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
         return;
       }
 
+      // Skip if a capture is already in progress
+      if (_isCapturing) {
+        if (!_processingComplete) {
+          _monitorFaceDetection();
+        }
+        return;
+      }
+
       try {
+        _isCapturing = true;
         final image = await _cameraController.takePicture();
+        _isCapturing = false;
+
         final faceDetected = await _faceRecognitionService.isFaceDetected(
           image.path,
         );
@@ -104,7 +127,7 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
           _monitorFaceDetection();
         }
       } catch (e) {
-        print('Error monitoring face: $e');
+        _isCapturing = false;
         if (!_processingComplete && !_isDisposed) {
           _monitorFaceDetection();
         }
@@ -139,13 +162,16 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
       final timeString =
           "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} ${now.hour >= 12 ? 'PM' : 'AM'}";
 
+      // Normalize date to midnight (00:00:00) for consistent storage and querying
+      final dateAtMidnight = DateTime(now.year, now.month, now.day);
+
       // Create or update attendance record
       var todayAttendance = await _database.getTodayAttendance();
 
       if (todayAttendance == null) {
         // New record
         todayAttendance = AttendanceRecord(
-          date: now,
+          date: dateAtMidnight,
           checkInTime: widget.attendanceType == 'checkIn' ? timeString : null,
           checkOutTime: widget.attendanceType == 'checkOut' ? timeString : null,
           status: 'Present',
@@ -159,7 +185,7 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
             id: todayAttendance.id,
             date: todayAttendance.date,
             checkInTime: timeString,
-            checkOutTime: todayAttendance.checkOutTime,
+            checkOutTime: null,
             status: todayAttendance.status,
             faceImagePath: image.path,
             location: widget.location,
@@ -195,7 +221,6 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
         }
       });
     } catch (e) {
-      print('Error processing face: $e');
       setState(() {
         _isProcessing = false;
         _statusMessage = 'Error: ${e.toString()}';

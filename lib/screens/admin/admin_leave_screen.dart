@@ -8,13 +8,12 @@ class AdminLeaveScreen extends StatefulWidget {
 }
 
 class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
-  int _currentIndex = 1;
+  final int _currentIndex = 1;
+  String? _selectedFilter; // Track which status filter is selected
 
   static const _textGreen600 = Color(0xFF16A34A);
   static const _bgRed50 = Color(0xFFFEF2F2);
   static const _textRed600 = Color(0xFFDC2626);
-  static const _bgBlue50 = Color(0xFFEFF6FF);
-  static const _textBlue600 = Color(0xFF2563EB);
   static const _brandYellow = Color(0xFFFACC15);
   static const _textYellow700 = Color(0xFFB45309);
 
@@ -24,14 +23,14 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
       'label': 'Pending Requests',
       'icon': Icons.access_time,
       'iconColor': _textYellow700,
-      'background': _brandYellow.withOpacity(0.2),
+      'background': _brandYellow.withValues(alpha: 0.2),
     },
     {
       'value': '1',
       'label': 'Approved',
       'icon': Icons.check_circle,
       'iconColor': _textGreen600,
-      'background': Colors.green.withOpacity(0.1),
+      'background': Colors.green.withValues(alpha: 0.1),
     },
     {
       'value': '1',
@@ -45,7 +44,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
       'label': 'Add\nLeave Balance',
       'icon': Icons.add,
       'iconColor': Colors.blueGrey,
-      'background': Colors.blueGrey.withOpacity(0.08),
+      'background': Colors.blueGrey.withValues(alpha: 0.08),
       'isAdd': true,
     },
   ];
@@ -54,28 +53,28 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
     {
       'name': 'John Anderson',
       'status': 'Pending',
-      'type': 'Vacation Leave',
+      'type': 'Annual Leave',
       'period': 'Dec 15, 2025 - Dec 16, 2025',
       'applied': 'Nov 28, 2025',
     },
     {
       'name': 'Michael Chen',
       'status': 'Approved',
-      'type': 'Personal Leave',
+      'type': 'Annual Leave',
       'period': 'Jan 2, 2026 - Jan 5, 2026',
       'applied': 'Nov 25, 2025',
     },
     {
       'name': 'Emily Davis',
       'status': 'Rejected',
-      'type': 'Emergency Leave',
+      'type': 'Compassionate Leave',
       'period': 'Nov 28, 2025 - Nov 28, 2025',
       'applied': 'Nov 27, 2025',
     },
     {
       'name': 'Robert Johnson',
       'status': 'Pending',
-      'type': 'Vacation Leave',
+      'type': 'Annual Leave',
       'period': 'Dec 20, 2025 - Dec 24, 2025',
       'applied': 'Nov 30, 2025',
     },
@@ -94,6 +93,95 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
         Navigator.pushReplacementNamed(context, '/adminProfile');
         break;
     }
+  }
+
+  void _showAddLeaveBalanceDialog() {
+    String? selectedLeaveType;
+    final staffIdController = TextEditingController();
+    final daysController = TextEditingController();
+    final leaveTypes = ['Annual Leave', 'Compassionate Leave'];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Leave Balance'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Add leave balance for a staff member',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: staffIdController,
+                decoration: InputDecoration(
+                  hintText: 'Enter staff ID (e.g., 2024001)',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: selectedLeaveType,
+                hint: const Text('Select leave type'),
+                items: leaveTypes
+                    .map(
+                      (type) =>
+                          DropdownMenuItem(value: type, child: Text(type)),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  setState(() {
+                    selectedLeaveType = value;
+                  });
+                },
+                decoration: InputDecoration(
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: daysController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  hintText: 'Enter number of days',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFACC15),
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Leave balance added successfully!'),
+                ),
+              );
+            },
+            child: const Text('Add Balance'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -117,10 +205,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
               const SizedBox(height: 4),
               Text(
                 'Review and manage employee leave requests',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey[700],
-                ),
+                style: TextStyle(fontSize: 14, color: Colors.grey[700]),
               ),
               const SizedBox(height: 20),
               GridView.builder(
@@ -135,13 +220,40 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                 ),
                 itemBuilder: (context, index) {
                   final item = _summaryCards[index];
-                  return _SummaryCard(
-                    value: item['value'] as String,
-                    label: item['label'] as String,
-                    icon: item['icon'] as IconData,
-                    iconColor: item['iconColor'] as Color,
-                    background: item['background'] as Color,
-                    isAdd: (item['isAdd'] as bool?) ?? false,
+                  final isAdd = (item['isAdd'] as bool?) ?? false;
+                  final label = item['label'] as String;
+                  final statusFilter = !isAdd
+                      ? label.contains('Pending')
+                            ? 'Pending'
+                            : label.contains('Approved')
+                            ? 'Approved'
+                            : label.contains('Rejected')
+                            ? 'Rejected'
+                            : null
+                      : null;
+                  final isSelected = _selectedFilter == statusFilter;
+
+                  return GestureDetector(
+                    onTap: isAdd
+                        ? _showAddLeaveBalanceDialog
+                        : statusFilter != null
+                        ? () {
+                            setState(() {
+                              _selectedFilter = _selectedFilter == statusFilter
+                                  ? null
+                                  : statusFilter;
+                            });
+                          }
+                        : null,
+                    child: _SummaryCard(
+                      value: item['value'] as String,
+                      label: item['label'] as String,
+                      icon: item['icon'] as IconData,
+                      iconColor: item['iconColor'] as Color,
+                      background: item['background'] as Color,
+                      isAdd: isAdd,
+                      isSelected: !isAdd && isSelected,
+                    ),
                   );
                 },
               ),
@@ -159,30 +271,61 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.description_outlined,
-                            color: Colors.grey[800]),
+                        Icon(
+                          Icons.description_outlined,
+                          color: Colors.grey[800],
+                        ),
                         const SizedBox(width: 8),
-                        Text(
-                          'All Leave Requests (${_leaveRequests.length})',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
+                        Expanded(
+                          child: Text(
+                            _selectedFilter != null
+                                ? '$_selectedFilter Leave Requests (${_leaveRequests.where((e) => e['status'] == _selectedFilter).length})'
+                                : 'All Leave Requests (${_leaveRequests.length})',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
+                        if (_selectedFilter != null)
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedFilter = null;
+                              });
+                            },
+                            child: Text(
+                              'Clear',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue[600],
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 16),
                     ListView.separated(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _leaveRequests.length,
+                      itemCount: _selectedFilter != null
+                          ? _leaveRequests
+                                .where((e) => e['status'] == _selectedFilter)
+                                .length
+                          : _leaveRequests.length,
                       separatorBuilder: (_, __) => Divider(
                         height: 20,
                         thickness: 1,
                         color: Colors.grey[200],
                       ),
                       itemBuilder: (context, index) {
-                        final leave = _leaveRequests[index];
+                        final filteredRequests = _selectedFilter != null
+                            ? _leaveRequests
+                                  .where((e) => e['status'] == _selectedFilter)
+                                  .toList()
+                            : _leaveRequests;
+                        final leave = filteredRequests[index];
                         return _LeaveCard(
                           name: leave['name']!,
                           status: leave['status']!,
@@ -217,10 +360,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
             icon: Icon(Icons.calendar_month),
             label: 'Leave',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: 'Profile',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
         ],
       ),
     );
@@ -235,6 +375,7 @@ class _SummaryCard extends StatelessWidget {
     required this.iconColor,
     required this.background,
     this.isAdd = false,
+    this.isSelected = false,
   });
 
   final String value;
@@ -243,6 +384,7 @@ class _SummaryCard extends StatelessWidget {
   final Color iconColor;
   final Color background;
   final bool isAdd;
+  final bool isSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -250,7 +392,19 @@ class _SummaryCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(
+          color: isSelected ? Colors.blue[600]! : Colors.grey[300]!,
+          width: isSelected ? 2 : 1,
+        ),
+        boxShadow: isSelected
+            ? [
+                BoxShadow(
+                  color: Colors.blue.withValues(alpha: 0.2),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
       ),
       padding: const EdgeInsets.all(16),
       child: isAdd
@@ -281,10 +435,7 @@ class _SummaryCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       'Leave Balance',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[700],
-                      ),
+                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
                     ),
                   ],
                 ),
@@ -312,10 +463,7 @@ class _SummaryCard extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey[700],
-                  ),
+                  style: TextStyle(fontSize: 13, color: Colors.grey[700]),
                 ),
               ],
             ),
@@ -356,9 +504,9 @@ class _LeaveCard extends StatelessWidget {
   Color _statusBackground() {
     switch (status.toLowerCase()) {
       case 'approved':
-        return Colors.green.withOpacity(0.1);
+        return Colors.green.withValues(alpha: 0.1);
       case 'pending':
-        return _AdminLeaveScreenState._brandYellow.withOpacity(0.2);
+        return _AdminLeaveScreenState._brandYellow.withValues(alpha: 0.2);
       default:
         return _AdminLeaveScreenState._bgRed50;
     }
@@ -389,7 +537,7 @@ class _LeaveCard extends StatelessWidget {
               decoration: BoxDecoration(
                 color: statusBg,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: statusColor.withOpacity(0.4)),
+                border: Border.all(color: statusColor.withValues(alpha: 0.4)),
               ),
               child: Row(
                 children: [
@@ -397,8 +545,8 @@ class _LeaveCard extends StatelessWidget {
                     status.toLowerCase() == 'approved'
                         ? Icons.check_circle
                         : status.toLowerCase() == 'pending'
-                            ? Icons.access_time
-                            : Icons.cancel,
+                        ? Icons.access_time
+                        : Icons.cancel,
                     color: statusColor,
                     size: 16,
                   ),
@@ -426,10 +574,7 @@ class _LeaveCard extends StatelessWidget {
                 children: [
                   const Text(
                     'Leave Type',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey,
-                    ),
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -448,10 +593,7 @@ class _LeaveCard extends StatelessWidget {
                 children: [
                   const Text(
                     'Period',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey,
-                    ),
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -472,18 +614,12 @@ class _LeaveCard extends StatelessWidget {
           children: [
             const Text(
               'Applied On',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey,
-              ),
+              style: TextStyle(fontSize: 13, color: Colors.grey),
             ),
             const SizedBox(height: 4),
             Text(
               applied,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ],
         ),

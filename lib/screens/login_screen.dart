@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({Key? key}) : super(key: key);
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -37,26 +37,30 @@ class _LoginScreenState extends State<LoginScreen> {
     final numericId = int.tryParse(trimmed);
 
     // Helper to query a collection name (handles case differences like users/Users)
-    Future<QuerySnapshot<Map<String, dynamic>>> _q(
+    Future<QuerySnapshot<Map<String, dynamic>>> query(
       String collection,
       String field,
       dynamic value,
     ) {
-      return _firestore.collection(collection).where(field, isEqualTo: value).limit(1).get();
+      return _firestore
+          .collection(collection)
+          .where(field, isEqualTo: value)
+          .limit(1)
+          .get();
     }
 
     // Try both numeric and string matches for staffId/adminId
     final List<Future<QuerySnapshot<Map<String, dynamic>>>> queries = [];
     if (numericId != null) {
       for (final col in ['users', 'Users']) {
-        queries.add(_q(col, 'staffId', numericId));
-        queries.add(_q(col, 'adminId', numericId));
+        queries.add(query(col, 'staffId', numericId));
+        queries.add(query(col, 'adminId', numericId));
       }
     }
     // Fallback to string match in case IDs are stored as strings
     for (final col in ['users', 'Users']) {
-      queries.add(_q(col, 'staffId', trimmed));
-      queries.add(_q(col, 'adminId', trimmed));
+      queries.add(query(col, 'staffId', trimmed));
+      queries.add(query(col, 'adminId', trimmed));
     }
 
     for (final future in queries) {
@@ -86,9 +90,11 @@ class _LoginScreenState extends State<LoginScreen> {
       final resolvedEmail = await _lookupEmailForId(_idController.text.trim());
       if (resolvedEmail == null) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('User ID not found. Please check with admin.'),
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('User ID not found. Please check with admin.'),
+          ),
+        );
         return;
       }
 
@@ -125,13 +131,13 @@ class _LoginScreenState extends State<LoginScreen> {
       } else if (e.code == 'invalid-email') {
         message = 'Invalid email/ID format.';
       }
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(message),
-      ));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Unexpected error: ${e.toString()}'),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unexpected error: ${e.toString()}')),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -428,12 +434,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                         strokeWidth: 2,
                                         valueColor:
                                             AlwaysStoppedAnimation<Color>(
-                                          Colors.black,
-                                        ),
+                                              Colors.black,
+                                            ),
                                       ),
                                     )
                                   : const Icon(Icons.login),
-                              label: Text(_isLoading ? 'Signing In...' : 'Sign In'),
+                              label: Text(
+                                _isLoading ? 'Signing In...' : 'Sign In',
+                              ),
                               onPressed: _isLoading ? null : _login,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.yellow[600],

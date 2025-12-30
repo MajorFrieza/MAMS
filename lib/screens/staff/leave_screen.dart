@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 class LeaveScreen extends StatefulWidget {
+  const LeaveScreen({super.key});
+
   @override
-  _LeaveScreenState createState() => _LeaveScreenState();
+  State<LeaveScreen> createState() => _LeaveScreenState();
 }
 
 class _LeaveScreenState extends State<LeaveScreen> {
@@ -190,7 +192,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: DropdownButtonFormField<String>(
-                          value: selectedLeaveType,
+                          initialValue: selectedLeaveType,
                           hint: Text('Select leave type'),
                           decoration: InputDecoration(
                             border: InputBorder.none,
@@ -243,8 +245,9 @@ class _LeaveScreenState extends State<LeaveScreen> {
                               firstDate: DateTime.now(),
                               lastDate: DateTime.now().add(Duration(days: 365)),
                             );
-                            if (picked != null)
+                            if (picked != null) {
                               setState(() => startDate = picked);
+                            }
                           },
                         ),
                       ),
@@ -280,8 +283,9 @@ class _LeaveScreenState extends State<LeaveScreen> {
                               firstDate: startDate ?? DateTime.now(),
                               lastDate: DateTime.now().add(Duration(days: 365)),
                             );
-                            if (picked != null)
+                            if (picked != null) {
                               setState(() => endDate = picked);
+                            }
                           },
                         ),
                       ),
