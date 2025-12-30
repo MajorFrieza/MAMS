@@ -141,11 +141,19 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
 
     setState(() {
       _isProcessing = true;
+      _processingComplete = true; // stop monitoring further captures
       _statusMessage = 'Processing face recognition...';
     });
 
     try {
+      // Wait for any in-flight capture to finish
+      while (_isCapturing) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+      _isCapturing = true;
+
       final image = await _cameraController.takePicture();
+      _isCapturing = false;
       final faceQuality = await _faceRecognitionService.isFaceQualityGood(
         image.path,
       );
@@ -329,68 +337,68 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
                     ),
                   ),
 
-                  SizedBox(height: 24),
+                      SizedBox(height: 24),
 
-                  // Buttons
-                  if (!_processingComplete)
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () => Navigator.pop(context),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.grey[400],
-                                padding: EdgeInsets.symmetric(vertical: 16),
-                              ),
-                              child: Text(
-                                'Cancel',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black,
+                      // Buttons
+                      if (!_processingComplete)
+                        Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.grey[400],
+                                    padding: EdgeInsets.symmetric(vertical: 16),
+                                  ),
+                                  child: Text(
+                                    'Cancel',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: _faceDetected && !_isProcessing
-                                  ? _processFaceRecognition
-                                  : null,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: _faceDetected
-                                    ? Colors.green
-                                    : Colors.grey[400],
-                                padding: EdgeInsets.symmetric(vertical: 16),
-                              ),
-                              child: _isProcessing
-                                  ? SizedBox(
-                                      height: 20,
-                                      width: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
+                              SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: _faceDetected && !_isProcessing
+                                      ? _processFaceRecognition
+                                      : null,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _faceDetected
+                                        ? Colors.green
+                                        : Colors.grey[400],
+                                    padding: EdgeInsets.symmetric(vertical: 16),
+                                  ),
+                                  child: _isProcessing
+                                      ? SizedBox(
+                                          height: 20,
+                                          width: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
                                               Colors.white,
                                             ),
-                                      ),
-                                    )
-                                  : Text(
-                                      'Confirm',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                            ),
+                                          ),
+                                        )
+                                      : Text(
+                                          'Confirm',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                    ),
+                        ),
 
                   // Success message
                   if (_processingComplete && _isSuccess)

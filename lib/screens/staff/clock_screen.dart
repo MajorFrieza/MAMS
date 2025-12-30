@@ -29,9 +29,10 @@ class _ClockScreenState extends State<ClockScreen> {
   String _currentLocation = "Loading location...";
   bool _loadingLocation = true;
   // replace with with Mutiara lat long
-  static const double _officeLat = 1.468461;
+  static const double _officeLat = 1.458066;
   static const double _officeLng = 110.454651;
   static const double _allowedRadiusMeters = 150;
+  bool _dayComplete = false;
 
   @override
   void initState() {
@@ -57,8 +58,13 @@ class _ClockScreenState extends State<ClockScreen> {
         if (!mounted) return;
         setState(() {
           _todayAttendance = record;
+          _dayComplete =
+              isCreatedToday &&
+              record.checkInTime != null &&
+              record.checkOutTime != null;
           checkedIn =
               isCreatedToday &&
+              !_dayComplete &&
               record.checkInTime != null &&
               record.checkOutTime == null &&
               (record.faceImagePath != null &&
@@ -196,6 +202,7 @@ class _ClockScreenState extends State<ClockScreen> {
   }
 
   Future<void> _checkIn() async {
+    if (_dayComplete) return;
     await _refreshGeofence();
     if (!_geoAllowed) return;
 
@@ -237,6 +244,7 @@ class _ClockScreenState extends State<ClockScreen> {
   }
 
   Future<void> _checkOut() async {
+    if (_dayComplete) return;
     await _refreshGeofence();
     if (!_geoAllowed) return;
 
@@ -272,6 +280,7 @@ class _ClockScreenState extends State<ClockScreen> {
       await _loadTodayAttendance();
       setState(() {
         checkedIn = false;
+        _dayComplete = true;
         _showSummary = true;
       });
     }
@@ -481,8 +490,11 @@ class _ClockScreenState extends State<ClockScreen> {
                           children: [
                             Expanded(
                               child: ElevatedButton.icon(
-                                onPressed:
-                                    (_geoAllowed && !checkedIn) ? _checkIn : null,
+                                onPressed: (_geoAllowed &&
+                                        !checkedIn &&
+                                        !_dayComplete)
+                                    ? _checkIn
+                                    : null,
                                 icon: Icon(Icons.camera_alt),
                                 label: Text("Check In"),
                                 style: ElevatedButton.styleFrom(
@@ -497,8 +509,11 @@ class _ClockScreenState extends State<ClockScreen> {
                             SizedBox(width: 10),
                             Expanded(
                               child: ElevatedButton.icon(
-                                onPressed:
-                                    (_geoAllowed && checkedIn) ? _checkOut : null,
+                                onPressed: (_geoAllowed &&
+                                        checkedIn &&
+                                        !_dayComplete)
+                                    ? _checkOut
+                                    : null,
                                 icon: Icon(Icons.camera_alt),
                                 label: Text("Check Out"),
                                 style: ElevatedButton.styleFrom(
