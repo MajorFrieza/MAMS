@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AdminLeaveScreen extends StatefulWidget {
   const AdminLeaveScreen({super.key});
@@ -17,68 +19,12 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
   static const _brandYellow = Color(0xFFFACC15);
   static const _textYellow700 = Color(0xFFB45309);
 
-  final List<Map<String, dynamic>> _summaryCards = [
-    {
-      'value': '3',
-      'label': 'Pending Requests',
-      'icon': Icons.access_time,
-      'iconColor': _textYellow700,
-      'background': _brandYellow.withValues(alpha: 0.2),
-    },
-    {
-      'value': '1',
-      'label': 'Approved',
-      'icon': Icons.check_circle,
-      'iconColor': _textGreen600,
-      'background': Colors.green.withValues(alpha: 0.1),
-    },
-    {
-      'value': '1',
-      'label': 'Rejected',
-      'icon': Icons.cancel,
-      'iconColor': _textRed600,
-      'background': _bgRed50,
-    },
-    {
-      'value': '+',
-      'label': 'Add\nLeave Balance',
-      'icon': Icons.add,
-      'iconColor': Colors.blueGrey,
-      'background': Colors.blueGrey.withValues(alpha: 0.08),
-      'isAdd': true,
-    },
-  ];
-
-  final List<Map<String, String>> _leaveRequests = [
-    {
-      'name': 'John Anderson',
-      'status': 'Pending',
-      'type': 'Annual Leave',
-      'period': 'Dec 15, 2025 - Dec 16, 2025',
-      'applied': 'Nov 28, 2025',
-    },
-    {
-      'name': 'Michael Chen',
-      'status': 'Approved',
-      'type': 'Annual Leave',
-      'period': 'Jan 2, 2026 - Jan 5, 2026',
-      'applied': 'Nov 25, 2025',
-    },
-    {
-      'name': 'Emily Davis',
-      'status': 'Rejected',
-      'type': 'Compassionate Leave',
-      'period': 'Nov 28, 2025 - Nov 28, 2025',
-      'applied': 'Nov 27, 2025',
-    },
-    {
-      'name': 'Robert Johnson',
-      'status': 'Pending',
-      'type': 'Annual Leave',
-      'period': 'Dec 20, 2025 - Dec 24, 2025',
-      'applied': 'Nov 30, 2025',
-    },
-  ];
+  // Live data from Firestore
+  List<Map<String, dynamic>> _allLeaveRequests = [];
+  int _pendingCount = 0;
+  int _approvedCount = 0;
+  int _rejectedCount = 0;
+  StreamSubscription? _leaveRequestsSub;
 
   void _onNavTap(int index) {
     if (index == _currentIndex) return;
@@ -96,10 +42,10 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
   }
 
   void _showAddLeaveBalanceDialog() {
+    String? selectedStaffId;
     String? selectedLeaveType;
-    final staffIdController = TextEditingController();
     final daysController = TextEditingController();
-    final leaveTypes = ['Annual Leave', 'Compassionate Leave'];
+    final leaveTypes = ['Annual', 'Compassionate'];
 
     showDialog(
       context: context,
@@ -115,14 +61,17 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
               const SizedBox(height: 16),
+              // Staff ID input or dropdown from Firestore
               TextField(
-                controller: staffIdController,
                 decoration: InputDecoration(
-                  hintText: 'Enter staff ID (e.g., 2024001)',
+                  hintText: 'Enter staff user ID',
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
                 ),
+                onChanged: (value) {
+                  selectedStaffId = value;
+                },
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
@@ -135,9 +84,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                     )
                     .toList(),
                 onChanged: (value) {
-                  setState(() {
-                    selectedLeaveType = value;
-                  });
+                  selectedLeaveType = value;
                 },
                 decoration: InputDecoration(
                   border: OutlineInputBorder(
@@ -150,7 +97,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                 controller: daysController,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  hintText: 'Enter number of days',
+                  hintText: 'Enter number of days to add',
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
@@ -169,13 +116,78 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
               backgroundColor: const Color(0xFFFACC15),
               foregroundColor: Colors.black,
             ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Leave balance added successfully!'),
-                ),
-              );
+            onPressed: () async {
+              if (selectedStaffId == null || selectedStaffId!.isEmpty) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Enter a staff ID')),
+                  );
+                }
+                return;
+              }
+              if (selectedLeaveType == null) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Select a leave type')),
+                  );
+                }
+                return;
+              }
+              if (daysController.text.isEmpty) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Enter number of days')),
+                  );
+                }
+                return;
+              }
+
+              try {
+                final days = int.parse(daysController.text);
+                final staffRef = FirebaseFirestore.instance
+                    .collection('users')
+                    .doc(selectedStaffId!);
+                final staffDoc = await staffRef.get();
+
+                if (!staffDoc.exists) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Staff ID not found')),
+                    );
+                  }
+                  return;
+                }
+
+                // Get current balance and add days
+                final currentBalances =
+                    (staffDoc.data()?['leaveBalances'] as Map?) ?? {};
+                final currentDays =
+                    (currentBalances[selectedLeaveType] as int?) ?? 0;
+
+                await staffRef.set({
+                  'leaveBalances': {
+                    ...currentBalances,
+                    selectedLeaveType!: currentDays + days,
+                  },
+                }, SetOptions(merge: true));
+
+                if (mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Added $days $selectedLeaveType days for $selectedStaffId',
+                      ),
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              }
             },
             child: const Text('Add Balance'),
           ),
@@ -185,7 +197,134 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _loadLeaveRequests();
+  }
+
+  void _loadLeaveRequests() {
+    // Subscribe to all leave requests from all users
+    _leaveRequestsSub = FirebaseFirestore.instance
+        .collectionGroup('leaveRequests')
+        .snapshots()
+        .listen((snapshot) {
+          if (mounted) {
+            setState(() {
+              _allLeaveRequests = snapshot.docs.map((doc) {
+                final data = doc.data();
+                final startDate = data['startDate'] as String? ?? '';
+                final endDate = data['endDate'] as String? ?? '';
+                int days = 0;
+                try {
+                  if (startDate.isNotEmpty && endDate.isNotEmpty) {
+                    final start = DateTime.parse(startDate);
+                    final end = DateTime.parse(endDate);
+                    days = end.difference(start).inDays + 1;
+                  }
+                } catch (e) {
+                  days = 0;
+                }
+
+                return {
+                  'docId': doc.id,
+                  'staffId': doc.reference.parent.parent?.id ?? 'Unknown',
+                  'staffName': data['staffName'] ?? 'Unknown',
+                  'status': data['status'] ?? 'Pending',
+                  'leaveType': data['leaveType'] ?? '',
+                  'startDate': startDate,
+                  'endDate': endDate,
+                  'days': days,
+                  'appliedDate': data['appliedDate'] ?? '',
+                  'reason': data['reason'] ?? '',
+                };
+              }).toList();
+
+              // Count by status
+              _pendingCount = _allLeaveRequests
+                  .where((r) => r['status'] == 'Pending')
+                  .length;
+              _approvedCount = _allLeaveRequests
+                  .where((r) => r['status'] == 'Approved')
+                  .length;
+              _rejectedCount = _allLeaveRequests
+                  .where((r) => r['status'] == 'Rejected')
+                  .length;
+            });
+          }
+        });
+  }
+
+  Future<void> _updateLeaveStatus(
+    String staffId,
+    String docId,
+    String newStatus,
+  ) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(staffId)
+          .collection('leaveRequests')
+          .doc(docId)
+          .update({
+            'status': newStatus,
+            'updatedAt': DateTime.now().toIso8601String(),
+          });
+
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Leave request $newStatus')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _leaveRequestsSub?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Build summary cards dynamically
+    final summaryCards = [
+      {
+        'value': '$_pendingCount',
+        'label': 'Pending Requests',
+        'icon': Icons.access_time,
+        'iconColor': _textYellow700,
+        'background': _brandYellow.withValues(alpha: 0.2),
+      },
+      {
+        'value': '$_approvedCount',
+        'label': 'Approved',
+        'icon': Icons.check_circle,
+        'iconColor': _textGreen600,
+        'background': Colors.green.withValues(alpha: 0.1),
+      },
+      {
+        'value': '$_rejectedCount',
+        'label': 'Rejected',
+        'icon': Icons.cancel,
+        'iconColor': _textRed600,
+        'background': _bgRed50,
+      },
+      {
+        'value': '+',
+        'label': 'Add\nLeave Balance',
+        'icon': Icons.add,
+        'iconColor': Colors.blueGrey,
+        'background': Colors.blueGrey.withValues(alpha: 0.08),
+        'isAdd': true,
+      },
+    ];
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -209,7 +348,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
               ),
               const SizedBox(height: 20),
               GridView.builder(
-                itemCount: _summaryCards.length,
+                itemCount: summaryCards.length,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -219,7 +358,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                   childAspectRatio: 1.05,
                 ),
                 itemBuilder: (context, index) {
-                  final item = _summaryCards[index];
+                  final item = summaryCards[index];
                   final isAdd = (item['isAdd'] as bool?) ?? false;
                   final label = item['label'] as String;
                   final statusFilter = !isAdd
@@ -279,8 +418,8 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                         Expanded(
                           child: Text(
                             _selectedFilter != null
-                                ? '$_selectedFilter Leave Requests (${_leaveRequests.where((e) => e['status'] == _selectedFilter).length})'
-                                : 'All Leave Requests (${_leaveRequests.length})',
+                                ? '$_selectedFilter Leave Requests (${_allLeaveRequests.where((e) => e['status'] == _selectedFilter).length})'
+                                : 'All Leave Requests (${_allLeaveRequests.length})',
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w700,
@@ -310,10 +449,10 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       itemCount: _selectedFilter != null
-                          ? _leaveRequests
+                          ? _allLeaveRequests
                                 .where((e) => e['status'] == _selectedFilter)
                                 .length
-                          : _leaveRequests.length,
+                          : _allLeaveRequests.length,
                       separatorBuilder: (_, __) => Divider(
                         height: 20,
                         thickness: 1,
@@ -321,19 +460,61 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                       ),
                       itemBuilder: (context, index) {
                         final filteredRequests = _selectedFilter != null
-                            ? _leaveRequests
+                            ? _allLeaveRequests
                                   .where((e) => e['status'] == _selectedFilter)
                                   .toList()
-                            : _leaveRequests;
+                            : _allLeaveRequests;
                         final leave = filteredRequests[index];
+
+                        // Format dates
+                        String formatDate(String dateStr) {
+                          try {
+                            final date = DateTime.parse(dateStr);
+                            const months = [
+                              'Jan',
+                              'Feb',
+                              'Mar',
+                              'Apr',
+                              'May',
+                              'Jun',
+                              'Jul',
+                              'Aug',
+                              'Sep',
+                              'Oct',
+                              'Nov',
+                              'Dec',
+                            ];
+                            return '${months[date.month - 1]} ${date.day}, ${date.year}';
+                          } catch (_) {
+                            return dateStr;
+                          }
+                        }
+
+                        final startDate = leave['startDate'] as String? ?? '';
+                        final endDate = leave['endDate'] as String? ?? '';
+                        final period =
+                            startDate.isNotEmpty && endDate.isNotEmpty
+                            ? '${formatDate(startDate)} - ${formatDate(endDate)}'
+                            : 'N/A';
+
                         return _LeaveCard(
-                          name: leave['name']!,
-                          status: leave['status']!,
-                          type: leave['type']!,
-                          period: leave['period']!,
-                          applied: leave['applied']!,
-                          onApprove: () {},
-                          onReject: () {},
+                          name: leave['staffName'] as String,
+                          status: leave['status'] as String,
+                          type: leave['leaveType'] as String,
+                          period: period,
+                          applied: formatDate(
+                            leave['appliedDate'] as String? ?? '',
+                          ),
+                          onApprove: () => _updateLeaveStatus(
+                            leave['staffId'] as String,
+                            leave['docId'] as String,
+                            'Approved',
+                          ),
+                          onReject: () => _updateLeaveStatus(
+                            leave['staffId'] as String,
+                            leave['docId'] as String,
+                            'Rejected',
+                          ),
                         );
                       },
                     ),

@@ -4,6 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../services/face_recognition_service.dart';
 import '../../models/attendance_record.dart';
 import '../../services/attendance_database.dart';
+import '../../services/location_service.dart';
 
 class FaceRecognitionScreen extends StatefulWidget {
   final String attendanceType; // 'checkIn' or 'checkOut'
@@ -166,6 +167,16 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
       final dateAtMidnight = DateTime(now.year, now.month, now.day);
 
       // Create or update attendance record
+      // Fetch position and address when possible to store both coords and readable address
+      final pos = await LocationService.instance.getCurrentPosition();
+      String? coords;
+      String? addr;
+      if (pos != null) {
+        coords =
+            '${pos.latitude.toStringAsFixed(6)},${pos.longitude.toStringAsFixed(6)}';
+        addr = await LocationService.instance.getAddressFromPosition(pos);
+      }
+
       var todayAttendance = await _database.getTodayAttendance();
 
       if (todayAttendance == null) {
@@ -176,7 +187,8 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
           checkOutTime: widget.attendanceType == 'checkOut' ? timeString : null,
           status: 'Present',
           faceImagePath: image.path,
-          location: widget.location,
+          locationCoords: coords,
+          locationAddress: addr ?? widget.location,
         );
       } else {
         // Update existing record
@@ -188,7 +200,8 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
             checkOutTime: null,
             status: todayAttendance.status,
             faceImagePath: image.path,
-            location: widget.location,
+            locationCoords: coords ?? todayAttendance.locationCoords,
+            locationAddress: addr ?? widget.location,
           );
         } else {
           todayAttendance = AttendanceRecord(
@@ -198,7 +211,8 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
             checkOutTime: timeString,
             status: todayAttendance.status,
             faceImagePath: image.path,
-            location: widget.location,
+            locationCoords: coords ?? todayAttendance.locationCoords,
+            locationAddress: addr ?? widget.location,
           );
         }
       }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'face_recognition_screen.dart';
 import '../../services/attendance_database.dart';
 import '../../models/attendance_record.dart';
+import '../../services/location_service.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
 
@@ -21,6 +22,8 @@ class _ClockScreenState extends State<ClockScreen> {
   AttendanceRecord? _todayAttendance;
   final AttendanceDatabase _attendanceDb = AttendanceDatabase();
   bool _showSummary = false;
+  String _currentLocation = "Loading location...";
+  bool _loadingLocation = true;
 
   @override
   void initState() {
@@ -29,6 +32,7 @@ class _ClockScreenState extends State<ClockScreen> {
     _updateDateTime();
     _timer = Timer.periodic(Duration(seconds: 1), (_) => _updateDateTime());
     _loadTodayAttendance();
+    _loadCurrentLocation();
   }
 
   Future<void> _loadTodayAttendance() async {
@@ -41,7 +45,7 @@ class _ClockScreenState extends State<ClockScreen> {
             created.year == now.year &&
             created.month == now.month &&
             created.day == now.day;
-
+        if (!mounted) return;
         setState(() {
           _todayAttendance = record;
           checkedIn =
@@ -100,6 +104,7 @@ class _ClockScreenState extends State<ClockScreen> {
   void _updateDateTime() {
     final myt = tz.getLocation('Asia/Kuala_Lumpur');
     final now = tz.TZDateTime.now(myt);
+    if (!mounted) return;
     setState(() {
       final suffix = now.hour >= 12 ? 'PM' : 'AM';
       final hour12 = now.hour % 12 == 0 ? 12 : now.hour % 12;
@@ -143,16 +148,72 @@ class _ClockScreenState extends State<ClockScreen> {
     return months[month];
   }
 
+  Future<void> _loadCurrentLocation() async {
+    try {
+      // Try to get a human-readable address first, fallback to coords
+      final location =
+          await LocationService.instance.getCurrentAddressString() ??
+          await LocationService.instance.getCurrentLocationString();
+      if (!mounted) return;
+      setState(() {
+        _currentLocation = location ?? "Location unavailable";
+        _loadingLocation = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _currentLocation = "Tap Check In to enable location";
+        _loadingLocation = false;
+      });
+    }
+  }
+
+  Future<void> _openLocationSettings() async {
+    final opened = await LocationService.instance.openLocationSettings();
+    if (opened) {
+      // give system a moment and then try to reload
+      await Future.delayed(Duration(milliseconds: 500));
+      if (!mounted) return;
+      setState(() {
+        _loadingLocation = true;
+      });
+      await _loadCurrentLocation();
+    } else {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to open location settings')),
+      );
+    }
+  }
+
   Future<void> _checkIn() async {
+    // Request location permission before checking in
+    await LocationService.instance.requestLocationPermission();
+
+    // Get current location
+    final location =
+        await LocationService.instance.getCurrentAddressString() ??
+        await LocationService.instance.getCurrentLocationString();
+
+    if (!mounted) return;
+
+    setState(() {
+      _currentLocation = location ?? "Location unavailable";
+    });
+
+    if (!mounted) return;
+
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => FaceRecognitionScreen(
           attendanceType: 'checkIn',
-          location: 'Office - Main Building',
+          location: _currentLocation,
         ),
       ),
     );
+
+    if (!mounted) return;
 
     if (result == true) {
       await _loadTodayAttendance();
@@ -164,15 +225,33 @@ class _ClockScreenState extends State<ClockScreen> {
   }
 
   Future<void> _checkOut() async {
+    // Request location permission before checking out
+    await LocationService.instance.requestLocationPermission();
+
+    // Get current location
+    final location =
+        await LocationService.instance.getCurrentAddressString() ??
+        await LocationService.instance.getCurrentLocationString();
+
+    if (!mounted) return;
+
+    setState(() {
+      _currentLocation = location ?? "Location unavailable";
+    });
+
+    if (!mounted) return;
+
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => FaceRecognitionScreen(
           attendanceType: 'checkOut',
-          location: 'Office - Main Building',
+          location: _currentLocation,
         ),
       ),
     );
+
+    if (!mounted) return;
 
     if (result == true) {
       await _loadTodayAttendance();
@@ -249,11 +328,52 @@ class _ClockScreenState extends State<ClockScreen> {
                             Icon(Icons.location_on, color: Colors.grey[700]),
                             SizedBox(width: 10),
                             Expanded(
-                              child: Text(
-                                "Current Location\nOffice - Main Building",
-                                style: TextStyle(fontSize: 16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Current Location",
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                  SizedBox(height: 4),
+                                  Text(
+                                    _currentLocation,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  SizedBox(height: 6),
+                                  if (_currentLocation.toLowerCase().contains(
+                                        'disabled',
+                                      ) ||
+                                      _currentLocation.toLowerCase().contains(
+                                        'not granted',
+                                      ))
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: TextButton.icon(
+                                        onPressed: _openLocationSettings,
+                                        icon: Icon(Icons.settings, size: 18),
+                                        label: Text('Enable Location'),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
+                            if (_loadingLocation)
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
                           ],
                         ),
                       ),

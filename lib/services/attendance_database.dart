@@ -56,8 +56,11 @@ class AttendanceDatabase {
         if (record.faceImagePath != null) {
           updateMap['faceImagePath'] = record.faceImagePath;
         }
-        if (record.location != null) {
-          updateMap['location'] = record.location;
+        if (record.locationCoords != null) {
+          updateMap['locationCoords'] = record.locationCoords;
+        }
+        if (record.locationAddress != null) {
+          updateMap['locationAddress'] = record.locationAddress;
         }
         updateMap['updatedAt'] = FieldValue.serverTimestamp();
 

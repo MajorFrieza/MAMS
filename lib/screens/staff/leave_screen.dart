@@ -1,4 +1,12 @@
+import 'dart:async';
+import 'dart:io';
+// removed unused import
+
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:file_picker/file_picker.dart';
 
 class LeaveScreen extends StatefulWidget {
   const LeaveScreen({super.key});
@@ -12,28 +20,161 @@ class _LeaveScreenState extends State<LeaveScreen> {
   DateTime? startDate;
   DateTime? endDate;
   String? selectedFileName;
-
+  PlatformFile? _selectedFile;
   final List<String> leaveTypes = ['Annual Leave', 'Compassionate Leave'];
 
-  // Dummy leave history
-  final List<Map<String, dynamic>> leaveHistory = [
-    {
-      'dateRange': 'Dec 15, 2025 - Dec 16, 2025',
-      'days': '2 days',
-      'leaveType': 'Annual Leave',
-      'status': 'Approved',
-      'appliedDate': 'Nov 28, 2025',
-      'attachment': null,
-    },
-    {
-      'dateRange': 'Nov 10, 2025 - Nov 10, 2025',
-      'days': '1 day',
-      'leaveType': 'Compassionate Leave',
-      'status': 'Rejected',
-      'appliedDate': 'Nov 8, 2025',
-      'attachment': 'document.pdf',
-    },
-  ];
+  // Live leave history and balances
+  List<Map<String, dynamic>> leaveHistory = [];
+  Map<String, int> leaveBalances = {'Annual': 0, 'Compassionate': 0};
+
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _leaveSub;
+
+  Future<void> _pickFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        withData: true,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        setState(() {
+          _selectedFile = file;
+          selectedFileName = file.name;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('File selection failed: $e')));
+    }
+  }
+
+  Future<void> _submitLeaveRequest() async {
+    if (selectedLeaveType == null || startDate == null || endDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please complete all required fields')),
+      );
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You must be signed in to submit a leave'),
+        ),
+      );
+      return;
+    }
+
+    // Validate balance before submitting
+    final daysRequested = endDate!.difference(startDate!).inDays + 1;
+    final balanceKey = selectedLeaveType!.toLowerCase().contains('annual')
+        ? 'Annual'
+        : 'Compassionate';
+    final currentBalance = leaveBalances[balanceKey] ?? 0;
+
+    if (currentBalance < daysRequested) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Insufficient $balanceKey balance. Available: $currentBalance days, Requested: $daysRequested days',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      String? attachmentUrl;
+      if (_selectedFile != null) {
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child('leave_attachments')
+            .child(user.uid)
+            .child(
+              '${DateTime.now().millisecondsSinceEpoch}_${_selectedFile!.name}',
+            );
+
+        if (_selectedFile!.bytes != null) {
+          final data = _selectedFile!.bytes!;
+          final uploadTask = await storageRef.putData(data);
+          attachmentUrl = await uploadTask.ref.getDownloadURL();
+        } else if (_selectedFile!.path != null) {
+          final file = File(_selectedFile!.path!);
+          final uploadTask = await storageRef.putFile(file);
+          attachmentUrl = await uploadTask.ref.getDownloadURL();
+        }
+      }
+
+      final doc = {
+        'staffId': user.uid,
+        'staffName': user.displayName ?? user.email ?? user.uid,
+        'leaveType': selectedLeaveType,
+        'startDate': startDate!.toIso8601String(),
+        'endDate': endDate!.toIso8601String(),
+        'reason': '',
+        'attachmentUrl': attachmentUrl,
+        'status': 'Pending',
+        'adminComment': null,
+        'appliedDate': DateTime.now().toIso8601String(),
+        'approvedDate': null,
+        'createdAt': DateTime.now().toIso8601String(),
+        'updatedAt': null,
+      };
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('leaveRequests')
+          .add(doc);
+
+      // decrement leave balance locally and persist (already validated above)
+
+      setState(() {
+        // optimistic local update of balances
+        leaveBalances[balanceKey] =
+            (leaveBalances[balanceKey] ?? 0) - daysRequested;
+
+        // add to local history for immediate feedback
+        leaveHistory.insert(0, {
+          'dateRange': '${_formatDate(startDate)} - ${_formatDate(endDate)}',
+          'days': '$daysRequested day(s)',
+          'leaveType': selectedLeaveType,
+          'status': 'Pending',
+          'appliedDate': _formatDate(DateTime.now()),
+          'attachment': selectedFileName,
+        });
+
+        // reset form
+        selectedLeaveType = null;
+        startDate = null;
+        endDate = null;
+        selectedFileName = null;
+        _selectedFile = null;
+      });
+
+      // persist updated balances
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'leaveBalances': leaveBalances,
+      }, SetOptions(merge: true));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Leave request submitted')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Submit failed: $e')));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,7 +244,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                   ),
                                   SizedBox(height: 8),
                                   Text(
-                                    '8',
+                                    '${leaveBalances['Annual']}',
                                     style: TextStyle(
                                       fontSize: 32,
                                       fontWeight: FontWeight.bold,
@@ -133,7 +274,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                   ),
                                   SizedBox(height: 8),
                                   Text(
-                                    '3',
+                                    '${leaveBalances['Compassionate']}',
                                     style: TextStyle(
                                       fontSize: 32,
                                       fontWeight: FontWeight.bold,
@@ -343,11 +484,8 @@ class _LeaveScreenState extends State<LeaveScreen> {
                             ),
                             SizedBox(height: 12),
                             ElevatedButton(
-                              onPressed: () {
-                                // File picker logic
-                                setState(
-                                  () => selectedFileName = 'document.pdf',
-                                );
+                              onPressed: () async {
+                                await _pickFile();
                               },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.white,
@@ -418,8 +556,8 @@ class _LeaveScreenState extends State<LeaveScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () {
-                      // Submit logic
+                    onPressed: () async {
+                      await _submitLeaveRequest();
                     },
                     icon: Icon(Icons.send),
                     label: Text('Submit Leave Request'),
@@ -469,7 +607,11 @@ class _LeaveScreenState extends State<LeaveScreen> {
                             Divider(height: 20),
                         itemBuilder: (context, index) {
                           final leave = leaveHistory[index];
-                          final isApproved = leave['status'] == 'Approved';
+                          final isApproved =
+                              (leave['status'] ?? '')
+                                  .toString()
+                                  .toLowerCase() ==
+                              'approved';
 
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -484,7 +626,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          leave['dateRange'],
+                                          leave['dateRange'] ?? '',
                                           style: TextStyle(
                                             fontSize: 14,
                                             fontWeight: FontWeight.w600,
@@ -492,7 +634,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                         ),
                                         SizedBox(height: 4),
                                         Text(
-                                          leave['days'],
+                                          leave['days'] ?? '',
                                           style: TextStyle(
                                             fontSize: 12,
                                             color: Colors.grey[600],
@@ -526,7 +668,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                         ),
                                         SizedBox(width: 4),
                                         Text(
-                                          leave['status'],
+                                          leave['status'] ?? '',
                                           style: TextStyle(
                                             fontSize: 12,
                                             fontWeight: FontWeight.w600,
@@ -551,7 +693,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
-                                  leave['leaveType'],
+                                  leave['leaveType'] ?? '',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: Colors.blue[700],
@@ -591,7 +733,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                   ),
                                   SizedBox(width: 4),
                                   Text(
-                                    'Applied on ${leave['appliedDate']}',
+                                    'Applied on ${leave['appliedDate'] ?? ''}',
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: Colors.grey[600],
@@ -617,6 +759,146 @@ class _LeaveScreenState extends State<LeaveScreen> {
 
   String _formatDate(DateTime? d) {
     if (d == null) return '';
-    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+    final months = [
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[d.month]} ${d.day}, ${d.year}';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _initData();
+  }
+
+  Future<void> _initData() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // load leave balances from user doc; initialize defaults to 1 if not present
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+    if (userDoc.exists) {
+      final data = userDoc.data();
+      if (data != null && data['leaveBalances'] is Map) {
+        final Map balances = data['leaveBalances'];
+        if (mounted) {
+          setState(() {
+            // Reset negative balances to default (1)
+            final annualBalance = (balances['Annual'] as int?) ?? 1;
+            final compassionateBalance =
+                (balances['Compassionate'] as int?) ?? 1;
+            leaveBalances['Annual'] = annualBalance < 0 ? 1 : annualBalance;
+            leaveBalances['Compassionate'] = compassionateBalance < 0
+                ? 1
+                : compassionateBalance;
+          });
+        }
+        // Persist corrected balances if any were negative
+        final annualBalance = (balances['Annual'] as int?) ?? 1;
+        final compassionateBalance = (balances['Compassionate'] as int?) ?? 1;
+        if (annualBalance < 0 || compassionateBalance < 0) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .set({
+                'leaveBalances': {
+                  'Annual': annualBalance < 0 ? 1 : annualBalance,
+                  'Compassionate': compassionateBalance < 0
+                      ? 1
+                      : compassionateBalance,
+                },
+              }, SetOptions(merge: true));
+        }
+      } else {
+        // Initialize default balances if not present
+        if (mounted) {
+          setState(() {
+            leaveBalances = {'Annual': 1, 'Compassionate': 1};
+          });
+        }
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'leaveBalances': {'Annual': 1, 'Compassionate': 1},
+        }, SetOptions(merge: true));
+      }
+    } else {
+      // Create user doc with default balances
+      if (mounted) {
+        setState(() {
+          leaveBalances = {'Annual': 1, 'Compassionate': 1};
+        });
+      }
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'leaveBalances': {'Annual': 1, 'Compassionate': 1},
+      });
+    }
+
+    // subscribe to leaveRequests collection for this user
+    _leaveSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('leaveRequests')
+        .orderBy('appliedDate', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+          if (mounted) {
+            setState(() {
+              leaveHistory = snapshot.docs.map((d) {
+                final m = d.data();
+                final startDateStr = m['startDate'] as String?;
+                final endDateStr = m['endDate'] as String?;
+                DateTime? startDate, endDate;
+                if (startDateStr != null) {
+                  try {
+                    startDate = DateTime.parse(startDateStr);
+                  } catch (e) {
+                    startDate = null;
+                  }
+                }
+                if (endDateStr != null) {
+                  try {
+                    endDate = DateTime.parse(endDateStr);
+                  } catch (e) {
+                    endDate = null;
+                  }
+                }
+                return {
+                  'dateRange': (startDate != null && endDate != null)
+                      ? '${_formatDate(startDate)} - ${_formatDate(endDate)}'
+                      : '${startDateStr ?? ''} - ${endDateStr ?? ''}',
+                  'days': (startDate != null && endDate != null)
+                      ? '${endDate.difference(startDate).inDays + 1} day(s)'
+                      : '',
+                  'leaveType': m['leaveType'] ?? '',
+                  'status': m['status'] ?? '',
+                  'appliedDate': m['appliedDate'] ?? '',
+                  'attachment': m['attachmentUrl'] != null
+                      ? (m['attachmentUrl'] as String).split('/').last
+                      : null,
+                };
+              }).toList();
+            });
+          }
+        });
+  }
+
+  @override
+  void dispose() {
+    _leaveSub?.cancel();
+    super.dispose();
   }
 }

@@ -7,7 +7,8 @@ class AttendanceRecord {
   final String? checkOutTime;
   final String status; // 'Present', 'Absent', 'Late'
   final String? faceImagePath;
-  final String? location;
+  final String? locationCoords; // "lat,lon"
+  final String? locationAddress; // human readable address
   final DateTime createdAt;
   final DateTime? updatedAt;
 
@@ -18,7 +19,8 @@ class AttendanceRecord {
     this.checkOutTime,
     required this.status,
     this.faceImagePath,
-    this.location,
+    this.locationCoords,
+    this.locationAddress,
     DateTime? createdAt,
     this.updatedAt,
   }) : createdAt = createdAt ?? DateTime.now();
@@ -31,7 +33,8 @@ class AttendanceRecord {
       'checkOutTime': checkOutTime,
       'status': status,
       'faceImagePath': faceImagePath,
-      'location': location,
+      'locationCoords': locationCoords,
+      'locationAddress': locationAddress,
       // createdAt/updatedAt will be managed by server timestamps in the DB
     };
   }
@@ -53,7 +56,10 @@ class AttendanceRecord {
       checkOutTime: map['checkOutTime'] as String?,
       status: map['status'] as String? ?? 'Present',
       faceImagePath: map['faceImagePath'] as String?,
-      location: map['location'] as String?,
+      // Support both new fields and legacy 'location' field
+      locationCoords: map['locationCoords'] as String?,
+      locationAddress:
+          map['locationAddress'] as String? ?? map['location'] as String?,
       createdAt: map['createdAt'] != null
           ? parseDate(map['createdAt'])
           : DateTime.now(),
@@ -75,7 +81,8 @@ class AttendanceRecord {
     String? checkOutTime,
     String? status,
     String? faceImagePath,
-    String? location,
+    String? locationCoords,
+    String? locationAddress,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -86,7 +93,8 @@ class AttendanceRecord {
       checkOutTime: checkOutTime ?? this.checkOutTime,
       status: status ?? this.status,
       faceImagePath: faceImagePath ?? this.faceImagePath,
-      location: location ?? this.location,
+      locationCoords: locationCoords ?? this.locationCoords,
+      locationAddress: locationAddress ?? this.locationAddress,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -95,7 +103,7 @@ class AttendanceRecord {
   @override
   String toString() {
     return 'AttendanceRecord(id: $id, date: $date, checkInTime: $checkInTime, '
-        'checkOutTime: $checkOutTime, status: $status, location: $location)';
+        'checkOutTime: $checkOutTime, status: $status, locationCoords: $locationCoords, locationAddress: $locationAddress)';
   }
 
   @override
