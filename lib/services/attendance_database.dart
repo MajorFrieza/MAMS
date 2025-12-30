@@ -255,6 +255,18 @@ class AttendanceDatabase {
       return Stream.value(null);
     }
   }
+
+  /// Clear all attendance records for current user
+  Future<void> clearAttendanceHistory() async {
+    final collection = _getAttendanceCollection();
+    final snapshot = await collection.get();
+    if (snapshot.docs.isEmpty) return;
+    final batch = _firestore.batch();
+    for (final doc in snapshot.docs) {
+      batch.delete(doc.reference);
+    }
+    await batch.commit();
+  }
 }
 
 /// Model for attendance statistics

@@ -133,14 +133,8 @@ class _LeaveScreenState extends State<LeaveScreen> {
           .collection('leaveRequests')
           .add(doc);
 
-      // decrement leave balance locally and persist (already validated above)
-
+      // add to local history for immediate feedback (balance remains until approval)
       setState(() {
-        // optimistic local update of balances
-        leaveBalances[balanceKey] =
-            (leaveBalances[balanceKey] ?? 0) - daysRequested;
-
-        // add to local history for immediate feedback
         leaveHistory.insert(0, {
           'dateRange': '${_formatDate(startDate)} - ${_formatDate(endDate)}',
           'days': '$daysRequested day(s)',
@@ -157,11 +151,6 @@ class _LeaveScreenState extends State<LeaveScreen> {
         selectedFileName = null;
         _selectedFile = null;
       });
-
-      // persist updated balances
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-        'leaveBalances': leaveBalances,
-      }, SetOptions(merge: true));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

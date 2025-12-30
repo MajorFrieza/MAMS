@@ -5,6 +5,8 @@ import '../../services/face_recognition_service.dart';
 import '../../models/attendance_record.dart';
 import '../../services/attendance_database.dart';
 import '../../services/location_service.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tzdata;
 
 class FaceRecognitionScreen extends StatefulWidget {
   final String attendanceType; // 'checkIn' or 'checkOut'
@@ -26,6 +28,7 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
   final FaceRecognitionService _faceRecognitionService =
       FaceRecognitionService();
   final AttendanceDatabase _database = AttendanceDatabase();
+  static bool _tzInitialized = false;
 
   bool _isProcessing = false;
   String _statusMessage = 'Position your face in the frame';
@@ -38,6 +41,10 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
   @override
   void initState() {
     super.initState();
+    if (!_tzInitialized) {
+      tzdata.initializeTimeZones();
+      _tzInitialized = true;
+    }
     _initializeControllerFuture = _initializeCamera();
   }
 
@@ -167,12 +174,17 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
       }
 
       // Get current time
-      final now = DateTime.now();
+      final myt = tz.getLocation('Asia/Kuala_Lumpur');
+      final nowTz = tz.TZDateTime.now(myt);
+      final hour12 = nowTz.hour % 12 == 0 ? 12 : nowTz.hour % 12;
+      final suffix = nowTz.hour >= 12 ? 'PM' : 'AM';
       final timeString =
-          "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} ${now.hour >= 12 ? 'PM' : 'AM'}";
+          "${hour12.toString().padLeft(2, '0')}:${nowTz.minute.toString().padLeft(2, '0')} $suffix";
 
-      // Normalize date to midnight (00:00:00) for consistent storage and querying
-      final dateAtMidnight = DateTime(now.year, now.month, now.day);
+      // Normalize date to midnight using device-local time (matches queries in AttendanceDatabase)
+      final nowLocal = DateTime.now();
+      final dateAtMidnight =
+          DateTime(nowLocal.year, nowLocal.month, nowLocal.day);
 
       // Create or update attendance record
       // Fetch position and address when possible to store both coords and readable address

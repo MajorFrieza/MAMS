@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../services/attendance_database.dart';
+import '../../models/attendance_record.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -8,144 +12,87 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  final AttendanceDatabase _attendanceDb = AttendanceDatabase();
+  List<AttendanceRecord> _history = [];
+  bool _loadingHistory = true;
+  String? _historyError;
+  bool _loadingProfile = true;
+  String? _profileError;
   String name = 'John Anderson';
   String staffId = '2024001';
   String role = 'Senior Developer';
   String email = 'john.anderson@company.com';
-  String phone = '+1 (555) 123-4567';
-  String department = 'Engineering';
   String joinDate = 'Jan 15, 2024';
   String status = 'Active';
 
-  // Attendance history
-  final List<Map<String, dynamic>> attendanceHistory = [
-    {
-      'date': 'Dec 10, 2025',
-      'checkIn': '09:00 AM',
-      'checkOut': '05:30 PM',
-      'status': 'Present',
-      'hours': '8.5h',
-    },
-    {
-      'date': 'Dec 9, 2025',
-      'checkIn': '08:55 AM',
-      'checkOut': '05:15 PM',
-      'status': 'Present',
-      'hours': '8.3h',
-    },
-    {
-      'date': 'Dec 8, 2025',
-      'checkIn': '09:10 AM',
-      'checkOut': '05:45 PM',
-      'status': 'Present',
-      'hours': '8.6h',
-    },
-    {
-      'date': 'Dec 7, 2025',
-      'checkIn': null,
-      'checkOut': null,
-      'status': 'Absent',
-      'hours': '0h',
-    },
-    {
-      'date': 'Dec 6, 2025',
-      'checkIn': '09:05 AM',
-      'checkOut': '05:20 PM',
-      'status': 'Present',
-      'hours': '8.2h',
-    },
-    {
-      'date': 'Dec 5, 2025',
-      'checkIn': '09:15 AM',
-      'checkOut': '05:30 PM',
-      'status': 'Late',
-      'hours': '8.2h',
-    },
-    {
-      'date': 'Dec 4, 2025',
-      'checkIn': '08:50 AM',
-      'checkOut': '05:25 PM',
-      'status': 'Present',
-      'hours': '8.6h',
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+    _loadHistory();
+  }
+
+  Future<void> _loadProfile() async {
+    setState(() {
+      _loadingProfile = true;
+      _profileError = null;
+    });
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
+        setState(() {
+          _loadingProfile = false;
+          _profileError = 'Not signed in';
+        });
+        return;
+      }
+      final snap =
+          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final data = snap.data() ?? {};
+      setState(() {
+        name = (data['name'] ??
+                data['fullName'] ??
+                data['staffName'] ??
+                data['email'] ??
+                name)
+            .toString();
+        staffId = (data['staffId'] ?? data['userID'] ?? staffId).toString();
+        role = (data['role'] ?? role).toString();
+        email = (data['email'] ?? email).toString();
+        joinDate = (data['joinDate'] ?? joinDate).toString();
+        status = (data['status'] ?? status).toString();
+        _loadingProfile = false;
+      });
+    } catch (e) {
+      setState(() {
+        _loadingProfile = false;
+        _profileError = 'Failed to load profile';
+      });
+    }
+  }
+
+  Future<void> _loadHistory() async {
+    setState(() {
+      _loadingHistory = true;
+      _historyError = null;
+    });
+    try {
+      final records = await _attendanceDb.getAllAttendance();
+      setState(() {
+        _history = records;
+        _loadingHistory = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingHistory = false;
+        _historyError = 'Could not load attendance history.';
+      });
+    }
+  }
 
   void _openEditProfile() {
-    final nameController = TextEditingController(text: name);
-    final roleController = TextEditingController(text: role);
-    final emailController = TextEditingController(text: email);
-    final phoneController = TextEditingController(text: phone);
-    final deptController = TextEditingController(text: department);
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom,
-          left: 16,
-          right: 16,
-          top: 16,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Edit Profile',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 12),
-            TextField(
-              controller: nameController,
-              decoration: InputDecoration(labelText: 'Name'),
-            ),
-            TextField(
-              controller: roleController,
-              decoration: InputDecoration(labelText: 'Role'),
-            ),
-            TextField(
-              controller: emailController,
-              decoration: InputDecoration(labelText: 'Email'),
-            ),
-            TextField(
-              controller: phoneController,
-              decoration: InputDecoration(labelText: 'Phone'),
-            ),
-            TextField(
-              controller: deptController,
-              decoration: InputDecoration(labelText: 'Department'),
-            ),
-            SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        name = nameController.text;
-                        role = roleController.text;
-                        email = emailController.text;
-                        phone = phoneController.text;
-                        department = deptController.text;
-                      });
-                      Navigator.pop(ctx);
-                    },
-                    child: Text('Save'),
-                  ),
-                ),
-                SizedBox(width: 12),
-                OutlinedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text('Cancel'),
-                ),
-              ],
-            ),
-            SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
+    // Edit UI removed per request
   }
 
   Color _getStatusColor(String status) {
@@ -165,6 +112,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final parts = fullName.split(' ');
     if (parts.length == 1) return parts[0][0];
     return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  String _formatDate(DateTime date) {
+    const months = [
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[date.month]} ${date.day}, ${date.year}';
+  }
+
+  DateTime? _parseTimeString(String? timeStr) {
+    if (timeStr == null) return null;
+    try {
+      final parts = timeStr.split(' ');
+      if (parts.length != 2) return null;
+      final timeParts = parts[0].split(':');
+      if (timeParts.length != 2) return null;
+      var hour = int.parse(timeParts[0]);
+      final minute = int.parse(timeParts[1]);
+      final period = parts[1].toUpperCase();
+      if (period == 'PM' && hour != 12) hour += 12;
+      if (period == 'AM' && hour == 12) hour = 0;
+      final now = DateTime.now();
+      return DateTime(now.year, now.month, now.day, hour, minute);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _workingHours(AttendanceRecord rec) {
+    final checkIn = _parseTimeString(rec.checkInTime);
+    final checkOut = _parseTimeString(rec.checkOutTime);
+    if (checkIn == null || checkOut == null) return '--';
+    final diff = checkOut.difference(checkIn);
+    final hours = diff.inHours;
+    final minutes = diff.inMinutes % 60;
+    return '${hours}h ${minutes}m';
   }
 
   @override
@@ -193,19 +188,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                         ),
                         SizedBox(height: 4),
-                        Text(
-                          'Manage your account',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 14,
+                        if (_loadingProfile)
+                          const SizedBox(
+                            height: 16,
+                            child: LinearProgressIndicator(),
+                          )
+                        else if (_profileError != null)
+                          Text(
+                            _profileError!,
+                            style: TextStyle(
+                              color: Colors.red[700],
+                              fontSize: 14,
+                            ),
+                          )
+                        else
+                          Text(
+                            'Manage your account',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14,
+                            ),
                           ),
-                        ),
                       ],
                     ),
-                    IconButton(
-                      icon: Icon(Icons.edit),
-                      onPressed: _openEditProfile,
-                    ),
+                    // Edit removed per request
                   ],
                 ),
                 SizedBox(height: 24),
@@ -297,10 +303,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       SizedBox(height: 12),
                       _infoRow(Icons.email, 'Email', email),
                       SizedBox(height: 12),
-                      _infoRow(Icons.phone, 'Phone', phone),
-                      SizedBox(height: 12),
-                      _infoRow(Icons.business, 'Department', department),
-                      SizedBox(height: 12),
+                      // Phone/Department removed per request
                       _infoRow(Icons.calendar_today, 'Join Date', joinDate),
                     ],
                   ),
@@ -326,82 +329,99 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                       SizedBox(height: 12),
-                      ListView.separated(
-                        shrinkWrap: true,
-                        physics: NeverScrollableScrollPhysics(),
-                        itemCount: attendanceHistory.length,
-                        separatorBuilder: (context, index) =>
-                            Divider(height: 16),
-                        itemBuilder: (context, index) {
-                          final record = attendanceHistory[index];
-                          final statusColor = _getStatusColor(record['status']);
+                      if (_loadingHistory)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (_historyError != null)
+                        Text(
+                          _historyError!,
+                          style: TextStyle(color: Colors.red[700]),
+                        )
+                      else if (_history.isEmpty)
+                        Text(
+                          'No records available.',
+                          style: TextStyle(color: Colors.grey[600]),
+                        )
+                      else
+                        ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _history.length,
+                          separatorBuilder: (context, index) =>
+                              const Divider(height: 16),
+                          itemBuilder: (context, index) {
+                            final record = _history[index];
+                            final statusColor = _getStatusColor(record.status);
 
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    record['date'],
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: statusColor.withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      record['status'],
-                                      style: TextStyle(
-                                        fontSize: 12,
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      _formatDate(record.date),
+                                      style: const TextStyle(
+                                        fontSize: 14,
                                         fontWeight: FontWeight.w600,
-                                        color: statusColor,
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                              SizedBox(height: 6),
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.schedule,
-                                    size: 16,
-                                    color: Colors.grey[600],
-                                  ),
-                                  SizedBox(width: 6),
-                                  Text(
-                                    record['checkIn'] != null
-                                        ? '${record['checkIn']} - ${record['checkOut']}'
-                                        : 'N/A',
-                                    style: TextStyle(
-                                      color: Colors.grey[700],
-                                      fontSize: 12,
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: statusColor.withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        record.status,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: statusColor,
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                  Spacer(),
-                                  Text(
-                                    record['hours'],
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.schedule,
+                                      size: 16,
+                                      color: Colors.grey[600],
                                     ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          );
-                        },
-                      ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      (record.checkInTime != null &&
+                                              record.checkOutTime != null)
+                                          ? '${record.checkInTime} - ${record.checkOutTime}'
+                                          : 'N/A',
+                                      style: TextStyle(
+                                        color: Colors.grey[700],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      _workingHours(record),
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            );
+                          },
+                        ),
                     ],
                   ),
                 ),

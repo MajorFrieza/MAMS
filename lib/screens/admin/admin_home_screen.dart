@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({super.key});
@@ -10,6 +11,12 @@ class AdminHomeScreen extends StatefulWidget {
 class _AdminHomeScreenState extends State<AdminHomeScreen> {
   final int _currentIndex = 0;
   String? _selectedFilter; // Track which status filter is selected
+  bool _loading = true;
+  String? _error;
+  int _presentCount = 0;
+  int _absentCount = 0;
+  int _lateCount = 0;
+  List<_StaffAttendance> _staff = [];
 
   static const _textGreen600 = Color(0xFF16A34A);
   static const _bgRed50 = Color(0xFFFEF2F2);
@@ -18,70 +25,104 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   static const _textBlue600 = Color(0xFF2563EB);
   static const _brandYellow = Color(0xFFFACC15);
 
-  final List<Map<String, dynamic>> _summaryCards = [
-    {
-      'value': '3',
-      'label': 'Present Today',
-      'icon': Icons.check_circle,
-      'iconColor': _textGreen600,
-      'background': Colors.green.withValues(alpha: 0.1),
-    },
-    {
-      'value': '5',
-      'label': 'Absent Today',
-      'icon': Icons.cancel,
-      'iconColor': _textRed600,
-      'background': _bgRed50,
-    },
-    {
-      'value': '2',
-      'label': 'Late Today',
-      'icon': Icons.access_time,
-      'iconColor': Colors.orange,
-      'background': _brandYellow.withValues(alpha: 0.18),
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadToday();
+  }
 
-  final List<Map<String, String>> _employees = [
-    {'name': 'Emily Davis', 'status': 'Absent', 'note': 'No check-in recorded'},
-    {
-      'name': 'David Thompson',
-      'status': 'Absent',
-      'note': 'No check-in recorded',
-    },
-    {
-      'name': 'Rachel Green',
-      'status': 'Absent',
-      'note': 'No check-in recorded',
-    },
-    {'name': 'Tom Wilson', 'status': 'Absent', 'note': 'No check-in recorded'},
-    {
-      'name': 'Anna Martinez',
-      'status': 'Absent',
-      'note': 'No check-in recorded',
-    },
-    {
-      'name': 'Michael Chen',
-      'status': 'Late',
-      'note': 'Check-in: 09:20 AM  •  20 min late',
-    },
-    {
-      'name': 'James Brown',
-      'status': 'Late',
-      'note': 'Check-in: 09:15 AM  •  15 min late',
-    },
-    {'name': 'John Smith', 'status': 'Present', 'note': 'Check-in: 08:45 AM'},
-    {
-      'name': 'Sarah Williams',
-      'status': 'Present',
-      'note': 'Check-in: 08:55 AM',
-    },
-    {
-      'name': 'Robert Johnson',
-      'status': 'Present',
-      'note': 'Check-in: 08:50 AM',
-    },
-  ];
+  Future<void> _loadToday() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final firestore = FirebaseFirestore.instance;
+
+      // Fetch staff users
+      final usersSnap = await firestore
+          .collection('users')
+          .where('role', isEqualTo: 'staff')
+          .get();
+      final staffUsers = <String, _StaffAttendance>{};
+      for (final doc in usersSnap.docs) {
+        final data = doc.data();
+        final name = (data['name'] ??
+                data['fullName'] ??
+                data['staffName'] ??
+                data['email'] ??
+                'Unknown')
+            .toString();
+        final staffId = (data['staffId'] ?? data['userID'] ?? '').toString();
+        staffUsers[doc.id] = _StaffAttendance(
+          userId: doc.id,
+          staffId: staffId,
+          name: name,
+          status: 'Absent',
+          note: 'No check-in recorded',
+        );
+      }
+
+      // Today range
+      final now = DateTime.now();
+      final startOfDay = DateTime(now.year, now.month, now.day);
+      final endOfDay = startOfDay.add(const Duration(days: 1));
+
+      // Attendance per user (avoids collection-group index)
+      int present = 0;
+      int late = 0;
+
+      for (final entry in staffUsers.entries) {
+        final uid = entry.key;
+        final existing = entry.value;
+        final snap = await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('attendance')
+            .where('date',
+                isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+            .where('date', isLessThan: Timestamp.fromDate(endOfDay))
+            .limit(1)
+            .get();
+
+        if (snap.docs.isEmpty) continue;
+
+        final data = snap.docs.first.data();
+        final status = (data['status'] ?? 'Present').toString();
+        final checkIn = data['checkInTime']?.toString();
+
+        final updated = _StaffAttendance(
+          userId: uid,
+          staffId: existing.staffId,
+          name: existing.name,
+          status: status,
+          note: checkIn != null ? 'Check-in: $checkIn' : 'No check-in recorded',
+        );
+
+        staffUsers[uid] = updated;
+        if (status.toLowerCase() == 'present') present++;
+        if (status.toLowerCase() == 'late') late++;
+      }
+
+      final totalStaff = staffUsers.length;
+      final absent = totalStaff - (present + late);
+
+      setState(() {
+        _presentCount = present;
+        _lateCount = late;
+        _absentCount = absent < 0 ? 0 : absent;
+        _staff = staffUsers.values.toList();
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Admin attendance load error: $e');
+      setState(() {
+        _loading = false;
+        _error = 'Failed to load attendance. ${e.toString()}';
+      });
+    }
+  }
 
   void _onNavTap(int index) {
     if (index == _currentIndex) return;
@@ -98,150 +139,191 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     }
   }
 
+  List<_StaffAttendance> _filteredStaff() {
+    if (_selectedFilter == null) return _staff;
+    return _staff
+        .where((s) => s.status.toLowerCase() == _selectedFilter!.toLowerCase())
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Attendance Review',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
+        child: RefreshIndicator(
+          onRefresh: _loadToday,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Attendance Review',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'December 1, 2025',
-                style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-              ),
-              const SizedBox(height: 20),
-              GridView.builder(
-                itemCount: _summaryCards.length,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 1.05,
+                const SizedBox(height: 4),
+                Text(
+                  _loading
+                      ? 'Loading today...'
+                      : _error != null
+                          ? _error!
+                          : 'Today',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
-                itemBuilder: (context, index) {
-                  final item = _summaryCards[index];
-                  final label = item['label'] as String;
-                  final statusFilter = label.contains('Present')
-                      ? 'Present'
-                      : label.contains('Absent')
-                      ? 'Absent'
-                      : label.contains('Late')
-                      ? 'Late'
-                      : null;
-                  final isSelected = _selectedFilter == statusFilter;
-
-                  return GestureDetector(
-                    onTap: statusFilter != null
-                        ? () {
-                            setState(() {
-                              _selectedFilter = _selectedFilter == statusFilter
-                                  ? null
-                                  : statusFilter;
-                            });
-                          }
-                        : null,
-                    child: _SummaryCard(
-                      value: item['value'] as String,
-                      label: item['label'] as String,
-                      icon: item['icon'] as IconData,
-                      iconColor: item['iconColor'] as Color,
-                      background: item['background'] as Color,
-                      isSelected: isSelected,
+                const SizedBox(height: 20),
+                if (_loading)
+                  const Center(child: CircularProgressIndicator())
+                else ...[
+                  GridView.builder(
+                    itemCount: 3,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      childAspectRatio: 1.05,
                     ),
-                  );
-                },
-              ),
-              const SizedBox(height: 24),
-              Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey[300]!),
-                ),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.groups, color: Colors.grey[800]),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _selectedFilter != null
-                                ? '$_selectedFilter Employees (${_employees.where((e) => e['status'] == _selectedFilter).length})'
-                                : 'All Employees (${_employees.length})',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                    itemBuilder: (context, index) {
+                      final cards = [
+                        (
+                          value: _presentCount.toString(),
+                          label: 'Present Today',
+                          icon: Icons.check_circle,
+                          iconColor: _textGreen600,
+                          background: Colors.green.withValues(alpha: 0.1),
+                          filter: 'Present'
                         ),
-                        if (_selectedFilter != null)
-                          GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                _selectedFilter = null;
-                              });
-                            },
-                            child: Text(
-                              'Clear',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.blue[600],
-                                fontWeight: FontWeight.w600,
+                        (
+                          value: _absentCount.toString(),
+                          label: 'Absent Today',
+                          icon: Icons.cancel,
+                          iconColor: _textRed600,
+                          background: _bgRed50,
+                          filter: 'Absent'
+                        ),
+                        (
+                          value: _lateCount.toString(),
+                          label: 'Late Today',
+                          icon: Icons.access_time,
+                          iconColor: Colors.orange,
+                          background: _brandYellow.withValues(alpha: 0.18),
+                          filter: 'Late'
+                        ),
+                      ];
+                      final item = cards[index];
+                      final isSelected = _selectedFilter == item.filter;
+
+                      return GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _selectedFilter =
+                                _selectedFilter == item.filter ? null : item.filter;
+                          });
+                        },
+                        child: _SummaryCard(
+                          value: item.value,
+                          label: item.label,
+                          icon: item.icon,
+                          iconColor: item.iconColor,
+                          background: item.background,
+                          isSelected: isSelected,
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.groups, color: Colors.grey[800]),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _selectedFilter != null
+                                    ? '${_selectedFilter!} Employees (${_filteredStaff().length})'
+                                    : 'All Employees (${_staff.length})',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
+                            IconButton(
+                              icon: const Icon(Icons.refresh),
+                              onPressed: _loadToday,
+                            ),
+                            if (_selectedFilter != null)
+                              GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _selectedFilter = null;
+                                  });
+                                },
+                                child: Text(
+                                  'Clear',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.blue[600],
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        if (_staff.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Text(
+                              'No staff records found for today.',
+                              style:
+                                  TextStyle(color: Colors.grey[700], fontSize: 13),
+                            ),
+                          )
+                        else
+                          ListView.separated(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _filteredStaff().length,
+                            separatorBuilder: (_, __) => Divider(
+                              height: 16,
+                              thickness: 1,
+                              color: Colors.grey[200],
+                            ),
+                            itemBuilder: (context, index) {
+                              final employee = _filteredStaff()[index];
+                              return _EmployeeTile(
+                                name: employee.name,
+                                status: employee.status,
+                                note: employee.note,
+                                staffId: employee.staffId,
+                              );
+                            },
                           ),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                    ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _selectedFilter != null
-                          ? _employees
-                                .where((e) => e['status'] == _selectedFilter)
-                                .length
-                          : _employees.length,
-                      separatorBuilder: (_, __) => Divider(
-                        height: 16,
-                        thickness: 1,
-                        color: Colors.grey[200],
-                      ),
-                      itemBuilder: (context, index) {
-                        final filteredEmployees = _selectedFilter != null
-                            ? _employees
-                                  .where((e) => e['status'] == _selectedFilter)
-                                  .toList()
-                            : _employees;
-                        final employee = filteredEmployees[index];
-                        return _EmployeeTile(
-                          name: employee['name']!,
-                          status: employee['status']!,
-                          note: employee['note']!,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
@@ -335,11 +417,13 @@ class _EmployeeTile extends StatelessWidget {
     required this.name,
     required this.status,
     required this.note,
+    this.staffId,
   });
 
   final String name;
   final String status;
   final String note;
+  final String? staffId;
 
   Color _statusColor() {
     switch (status.toLowerCase()) {
@@ -375,8 +459,8 @@ class _EmployeeTile extends StatelessWidget {
     final iconData = lowerStatus == 'present'
         ? Icons.check_circle
         : lowerStatus == 'late'
-        ? Icons.access_time
-        : Icons.cancel;
+            ? Icons.access_time
+            : Icons.cancel;
     return Row(
       children: [
         CircleAvatar(
@@ -397,6 +481,13 @@ class _EmployeeTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
+              if (staffId != null && staffId!.isNotEmpty) ...[
+                Text(
+                  'ID: $staffId',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 2),
+              ],
               Text(
                 note,
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
@@ -423,4 +514,20 @@ class _EmployeeTile extends StatelessWidget {
       ],
     );
   }
+}
+
+class _StaffAttendance {
+  final String userId;
+  final String staffId;
+  final String name;
+  final String status;
+  final String note;
+
+  _StaffAttendance({
+    required this.userId,
+    required this.staffId,
+    required this.name,
+    required this.status,
+    required this.note,
+  });
 }

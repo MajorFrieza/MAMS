@@ -33,6 +33,7 @@ class _ClockScreenState extends State<ClockScreen> {
   static const double _officeLng = 110.454651;
   static const double _allowedRadiusMeters = 150;
   bool _dayComplete = false;
+  int _currentDay = DateTime.now().day;
 
   @override
   void initState() {
@@ -120,14 +121,31 @@ class _ClockScreenState extends State<ClockScreen> {
     final myt = tz.getLocation('Asia/Kuala_Lumpur');
     final now = tz.TZDateTime.now(myt);
     if (!mounted) return;
+
+    final dayChanged = now.day != _currentDay;
+
     setState(() {
+      _currentDay = now.day;
       final suffix = now.hour >= 12 ? 'PM' : 'AM';
       final hour12 = now.hour % 12 == 0 ? 12 : now.hour % 12;
       _currentTime =
           "${hour12.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} $suffix";
       _currentDate =
           "${_getWeekday(now.weekday)}, ${_getMonth(now.month)} ${now.day}, ${now.year}";
+
+      // If the calendar day rolled over while the screen is open, reset the state
+      // so the user can check in/out for the new day.
+      if (dayChanged) {
+        _todayAttendance = null;
+        _dayComplete = false;
+        checkedIn = false;
+        _showSummary = false;
+      }
     });
+
+    if (dayChanged) {
+      _loadTodayAttendance();
+    }
   }
 
   String _getWeekday(int weekday) {
