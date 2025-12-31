@@ -134,46 +134,54 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                   ),
                 )
               else
-                DropdownButtonFormField<_StaffOption>(
-                  initialValue: selectedStaff,
-                  hint: const Text('Select staff'),
-                  items: _staffOptions
-                      .map(
-                        (s) => DropdownMenuItem(
-                          value: s,
-                          child: Text(
-                            s.displayName,
-                            overflow: TextOverflow.ellipsis,
+                SizedBox(
+                  width: double.infinity,
+                  child: DropdownButtonFormField<_StaffOption>(
+                    isExpanded: true,
+                    initialValue: selectedStaff,
+                    hint: const Text('Select staff'),
+                    items: _staffOptions
+                        .map(
+                          (s) => DropdownMenuItem(
+                            value: s,
+                            child: Text(
+                              s.displayName,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      selectedStaff = value;
+                      selectedStaffId = value?.id;
+                    },
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  initialValue: selectedLeaveType,
+                  hint: const Text('Select leave type'),
+                  items: leaveTypes
+                      .map(
+                        (type) =>
+                            DropdownMenuItem(value: type, child: Text(type)),
                       )
                       .toList(),
                   onChanged: (value) {
-                    selectedStaff = value;
-                    selectedStaffId = value?.id;
+                    selectedLeaveType = value;
                   },
                   decoration: InputDecoration(
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
-                  ),
-                ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: selectedLeaveType,
-                hint: const Text('Select leave type'),
-                items: leaveTypes
-                    .map(
-                      (type) =>
-                          DropdownMenuItem(value: type, child: Text(type)),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  selectedLeaveType = value;
-                },
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
                   ),
                 ),
               ),
@@ -668,8 +676,8 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                           attachmentName: leave['attachmentName'] as String?,
                           onViewAttachment: leave['attachmentUrl'] != null
                               ? () => _openAttachment(
-                                leave['attachmentUrl'] as String,
-                              )
+                                  leave['attachmentUrl'] as String,
+                                )
                               : null,
                           onApprove: () => _updateLeaveStatus(
                             leave['staffId'] as String,
