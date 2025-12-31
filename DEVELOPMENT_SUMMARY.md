@@ -1,100 +1,59 @@
-# MAMS Development Summary
+ # MAMS Development Summary (Updated)
 
-## ✅ Phase 1: Frontend Development - COMPLETE
+ ## ✅ Completed & Hardened (recent work)
 
-### Staff Features
-- Clock screen with real-time display and check-in/check-out functionality
-- Face recognition integration with camera capture
-- Attendance history and summary display
-- Leave request submission with date range selection
-- Notifications screen for leave updates
-- Profile screen with staff information
-- Bottom navigation for easy screen switching
+ - Profile screen rebuilt and hardened: `lib/screens/staff/profile_screen.dart`
+    - Safe Firestore loading with timeouts, mounted checks, and pagination for history (10 items/page).
+    - Robust name fallbacks (Firestore `displayName` / `name` / Auth displayName / email local-part).
+    - Join date resolved from `joinDate`, `createdAt`, or Auth metadata and formatted for display.
 
-### Admin Features
-- Attendance dashboard with employee list and filtering (Present/Absent/Late)
-- Leave management dashboard with filtering (Pending/Approved/Rejected)
-- Add Leave Balance dialog
-- Staff management (Create Staff, Edit Password, Delete Staff)
-- Admin profile with editable information
-- All dialogs and forms with proper validation
+ - Admin user creation improved: `lib/screens/admin/admin_profile_screen.dart`
+    - Sets Auth `displayName` and writes `displayName` + `joinDate` into Firestore when creating staff.
 
-### Code Quality
-- **0 analyzer issues** - All Flutter best practices implemented
-- Deprecated API calls fixed (withOpacity → withValues)
-- Unused code removed
-- Proper error handling throughout
-- Clean architecture with models, services, and screens
+ - Leave request flow fixed: `lib/screens/staff/leave_screen.dart`
+    - Removed optimistic local insertion to avoid temporary duplicate entries; UI relies on realtime snapshot listener.
 
-### UI/UX
-- All screens match wireframe designs
-- Yellow (#FACC15) brand color applied consistently
-- Red buttons for destructive actions (checkout, delete)
-- Green for positive actions (check-in)
-- Responsive layouts with proper constraints
-- Professional card-based design for data display
+ - Notifications, balances, and other screens hardened with query limits, mounted guards, and batched operations to avoid ANR/freezes.
 
----
+ - Migration tool added: `tools/sync_displayname.js` (and README)
+    - Copies `displayName`/`name`/`fullName` from Firestore `users` into Firebase Auth safely. (Run with service account.)
 
-## 🔄 Phase 2: Backend Integration - READY TO START
+ ## 📊 Current Project Status
 
-### What's Needed
-1. **Firebase Console Setup**
-   - Firestore database creation
-   - Security Rules configuration
-   - Firebase Authentication setup
+ - UI Screens: ✅ Complete
+ - Forms & Dialogs: ✅ Complete
+ - Face Recognition: ✅ Ready (camera integrated)
+ - Navigation: ✅ Complete
+ - Error Handling / Analyzer: ✅ Clean (no analyzer issues after fixes)
+ - Firestore Indexes: ⏳ Missing (some queries need composite indexes)
+ - Data Migration: ⏳ Planned (migration tool available)
+ - Runtime Verification: ⏳ Needs device/emulator verification (run app and spot-check)
 
-2. **Database Schema** (to be created in Firestore)
-   - users/{uid}/attendance/{doc} - Check-in/out records
-   - users/{uid}/leaveRequests/{doc} - Leave request data
-   - staff/{staffId} - Staff information
-   - admins/{adminId} - Admin information
+ ## 📝 Recommended Next Steps (priority)
 
-3. **Backend Implementation** (TODO locations marked in code)
-   - attendance_database.dart - Firestore CRUD operations
-   - face_recognition_screen.dart - Save attendance records
-   - admin screens - Approve/reject leave, manage staff
-   - login_screen.dart - Firebase Auth integration
-   - Replace dummy data with real Firestore queries
+ 1. Create required Firestore composite indexes (see Firestore error links in app logs).
+ 2. Run migration to sync display names and populate missing `joinDate` values using `tools/sync_displayname.js` (test in staging first).
+ 3. Run the app on devices/emulators and verify: profile, leave submission, notifications, and admin flows.
+ 4. Optionally implement optimistic UI with deduplication (if immediate local feedback is desired).
 
----
+ ## 🔧 How to run migration tool (safe steps)
 
-## 📊 Project Status
+ - Create Firebase service account and download JSON.
+ - Set env var then run:
 
-| Component | Status |
-|-----------|--------|
-| UI Screens | ✅ Complete |
-| Forms & Dialogs | ✅ Complete |
-| Face Recognition | ✅ Complete (camera ready) |
-| Navigation | ✅ Complete |
-| Error Handling | ✅ Complete |
-| Code Quality | ✅ 0 Issues |
-| Firebase Config | ⏳ Pending |
-| Database Schema | ⏳ Pending |
-| Backend Logic | ⏳ Pending |
-| Data Integration | ⏳ Pending |
+ ```bash
+ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+ node tools/sync_displayname.js
+ ```
 
----
+ Test in staging and back up Firestore before running in production.
 
-## 📝 Next Steps
+ ## 📦 Tech Stack (unchanged)
 
-1. Set up Firebase project and Firestore database
-2. Configure Firestore Security Rules
-3. Implement backend operations (marked with TODO in code)
-4. Connect real data instead of dummy data
-5. Test complete flow end-to-end
+ - Framework: Flutter (Dart)
+ - Backend: Firebase (Auth, Firestore, Cloud Storage)
+ - Plugins: camera, geolocator, file_picker, firebase_*
 
----
+ ---
 
-## 📦 Tech Stack
-
-- **Framework:** Flutter (Dart 3.9+)
-- **Backend:** Firebase (Auth, Firestore, Cloud Storage)
-- **Camera:** camera plugin v0.10.6
-- **Location:** geolocator plugin
-- **Timezone:** timezone package
-- **UI:** Material Design 3
-
----
-
-**Ready for backend phase! 🚀**
+ **Notes:** Most recent fixes focused on stability (avoiding ANR/freezes) and data consistency (displayName/joinDate). If you want, I can add a safe `joinDate` migration step to the `tools/` script or create an admin UI to edit `joinDate` for selected users.
