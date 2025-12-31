@@ -35,8 +35,12 @@ class _ClockScreenState extends State<ClockScreen> {
   //Tok location Fakulti
   //static const double _officeLat = 1.468160;
   //static const double _officeLng = 110.429021;
-  static const double _officeLat = 1.5902946383440368;
-  static const double _officeLng = 110.41580373862368;
+
+  //tok location rumah apiz
+  //static const double _officeLat = 1.5902946383440368;
+  //static const double _officeLng = 110.41580373862368;
+  static const double _officeLat = 1.458066;
+  static const double _officeLng = 110.454651;
   static const double _allowedRadiusMeters = 150;
   bool _dayComplete = false;
   int _currentDay = DateTime.now().day;

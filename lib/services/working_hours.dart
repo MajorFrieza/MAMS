@@ -27,7 +27,7 @@ class WorkingHours {
       'startMinute': 30,
       'endHour': 17,
       'endMinute': 30,
-    }, // Thursday (New Year's Day)
+    }, // Thursday
     5: {
       'startHour': 8,
       'startMinute': 30,
@@ -99,6 +99,6 @@ class WorkingHours {
         '${hours['startHour']!.toString().padLeft(2, '0')}:${hours['startMinute']!.toString().padLeft(2, '0')}';
     final end =
         '${hours['endHour']!.toString().padLeft(2, '0')}:${hours['endMinute']!.toString().padLeft(2, '0')}';
-    return '$start – $end';
+    return '$start - $end';
   }
 }

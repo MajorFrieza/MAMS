@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class LeaveScreen extends StatefulWidget {
   const LeaveScreen({super.key});
@@ -33,9 +34,23 @@ class _LeaveScreenState extends State<LeaveScreen> {
       final result = await FilePicker.platform.pickFiles(
         allowMultiple: false,
         withData: true,
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
       );
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
+        // Enforce 5MB max
+        final sizeBytes = file.size;
+        const maxBytes = 5 * 1024 * 1024;
+        if (sizeBytes > maxBytes) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('File too large. Max size is 5MB.'),
+            ),
+          );
+          return;
+        }
         setState(() {
           _selectedFile = file;
           selectedFileName = file.name;
@@ -89,7 +104,9 @@ class _LeaveScreenState extends State<LeaveScreen> {
 
     try {
       String? attachmentUrl;
+      String? attachmentName;
       if (_selectedFile != null) {
+        attachmentName = _selectedFile!.name;
         try {
           // Validate file before upload
           if (_selectedFile!.bytes == null && _selectedFile!.path == null) {
@@ -110,10 +127,18 @@ class _LeaveScreenState extends State<LeaveScreen> {
                 '${DateTime.now().millisecondsSinceEpoch}_${_selectedFile!.name}',
               );
 
+          final ext = (_selectedFile!.extension ?? '').toLowerCase();
+          String? contentType;
+          if (ext == 'pdf') contentType = 'application/pdf';
+          if (ext == 'jpg' || ext == 'jpeg') contentType = 'image/jpeg';
+          if (ext == 'png') contentType = 'image/png';
+
+          final metadata = SettableMetadata(contentType: contentType);
+
           if (_selectedFile!.bytes != null) {
             final data = _selectedFile!.bytes!;
             final uploadTask = await storageRef
-                .putData(data)
+                .putData(data, metadata)
                 .timeout(
                   const Duration(seconds: 30),
                   onTimeout: () => throw Exception('Upload timed out'),
@@ -141,7 +166,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
           } else if (_selectedFile!.path != null) {
             final file = File(_selectedFile!.path!);
             final uploadTask = await storageRef
-                .putFile(file)
+                .putFile(file, metadata)
                 .timeout(
                   const Duration(seconds: 30),
                   onTimeout: () => throw Exception('Upload timed out'),
@@ -189,6 +214,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
         'endDate': endDate!.toIso8601String(),
         'reason': '',
         'attachmentUrl': attachmentUrl,
+        'attachmentName': attachmentName,
         'status': 'Pending',
         'adminComment': null,
         'appliedDate': DateTime.now().toIso8601String(),
@@ -756,27 +782,19 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                 ),
                               ),
                               SizedBox(height: 8),
-                              if (leave['attachment'] != null)
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.insert_drive_file,
-                                      size: 16,
-                                      color: Colors.grey[600],
-                                    ),
-                                    SizedBox(width: 4),
-                                    Text(
-                                      leave['attachment'],
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.blue,
-                                        decoration: TextDecoration.underline,
-                                      ),
-                                    ),
-                                  ],
+                              if (leave['attachmentUrl'] != null)
+                                TextButton.icon(
+                                  onPressed: () => _openAttachment(
+                                    leave['attachmentUrl'] as String,
+                                  ),
+                                  icon: const Icon(Icons.insert_drive_file),
+                                  label: Text(
+                                    leave['attachmentName'] ??
+                                        leave['attachment'] ??
+                                        'View attachment',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
                                 ),
-                              if (leave['attachment'] == null)
-                                SizedBox(height: 0),
                               SizedBox(height: 8),
                               Row(
                                 children: [
@@ -947,6 +965,16 @@ class _LeaveScreenState extends State<LeaveScreen> {
                     endDate = null;
                   }
                 }
+                String formatApplied(String raw) {
+                  if (raw.isEmpty) return '';
+                  try {
+                    final dt = DateTime.parse(raw);
+                    return _formatDate(dt);
+                  } catch (_) {
+                    return raw.split('T').first;
+                  }
+                }
+
                 return {
                   'dateRange': (startDate != null && endDate != null)
                       ? '${_formatDate(startDate)} - ${_formatDate(endDate)}'
@@ -956,10 +984,12 @@ class _LeaveScreenState extends State<LeaveScreen> {
                       : '',
                   'leaveType': m['leaveType'] ?? '',
                   'status': m['status'] ?? '',
-                  'appliedDate': m['appliedDate'] ?? '',
-                  'attachment': m['attachmentUrl'] != null
-                      ? (m['attachmentUrl'] as String).split('/').last
-                      : null,
+                  'appliedDate': formatApplied(m['appliedDate'] ?? ''),
+                  'attachmentUrl': m['attachmentUrl'],
+                  'attachmentName': m['attachmentName'] ??
+                      (m['attachmentUrl'] != null
+                          ? (m['attachmentUrl'] as String).split('/').last
+                          : null),
                 };
               }).toList();
             });
@@ -972,5 +1002,24 @@ class _LeaveScreenState extends State<LeaveScreen> {
     _leaveSub?.cancel();
     _balanceSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _openAttachment(String url) async {
+    try {
+      final uri = Uri.parse(url);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open attachment')),
+          );
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open attachment')),
+        );
+      }
+    }
   }
 }

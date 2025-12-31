@@ -114,20 +114,13 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
         final faceDetected = await _faceRecognitionService.isFaceDetected(
           image.path,
         );
-        final faceQuality = await _faceRecognitionService.isFaceQualityGood(
-          image.path,
-        );
 
         if (mounted) {
           setState(() {
             _faceDetected = faceDetected;
-            if (faceDetected && !faceQuality) {
-              _statusMessage = 'Adjust your position and lighting';
-            } else if (faceDetected) {
-              _statusMessage = 'Face detected! Tap to confirm';
-            } else {
-              _statusMessage = 'Position your face in the frame';
-            }
+            _statusMessage = faceDetected
+                ? 'Face detected. Tap confirm to clock'
+                : 'Position your face in the frame';
           });
         }
 
@@ -162,17 +155,6 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
 
       final image = await _cameraController.takePicture();
       _isCapturing = false;
-      final faceQuality = await _faceRecognitionService.isFaceQualityGood(
-        image.path,
-      );
-
-      if (!faceQuality) {
-        setState(() {
-          _isProcessing = false;
-          _statusMessage = 'Face quality too low. Please try again.';
-        });
-        return;
-      }
 
       // Get current time
       final myt = tz.getLocation('Asia/Kuala_Lumpur');
@@ -183,12 +165,12 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
           "${hour12.toString().padLeft(2, '0')}:${nowTz.minute.toString().padLeft(2, '0')} $suffix";
 
       // Normalize date to midnight using device-local time (matches queries in AttendanceDatabase)
-      final nowLocal = DateTime.now();
+      final nowLocal = DateTime.now().toLocal();
       final dateAtMidnight = DateTime(
         nowLocal.year,
         nowLocal.month,
         nowLocal.day,
-      );
+      ).toUtc();
 
       // Create or update attendance record
       // Fetch position and address when possible to store both coords and readable address
@@ -427,12 +409,13 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
                     ),
 
                   // Success message
+                  // Success message
                   if (_processingComplete && _isSuccess)
                     Padding(
                       padding: EdgeInsets.all(16),
                       child: Container(
                         width: double.infinity,
-                        padding: EdgeInsets.all(20),
+                        padding: EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           color: Colors.green[50],
                           borderRadius: BorderRadius.circular(12),
@@ -441,33 +424,20 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
                             width: 2,
                           ),
                         ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                        child: Row(
                           children: [
-                            Icon(
-                              Icons.check_circle,
-                              size: 64,
-                              color: Colors.green,
-                            ),
-                            SizedBox(height: 16),
-                            Text(
-                              'Identity verified successfully',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green[700],
-                              ),
-                            ),
-                            SizedBox(height: 8),
-                            Text(
-                              widget.attendanceType == 'checkIn'
-                                  ? 'You have checked in successfully'
-                                  : 'You have checked out successfully',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.green[600],
+                            Icon(Icons.check_circle, color: Colors.green, size: 32),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                widget.attendanceType == 'checkIn'
+                                    ? 'Check-in successful'
+                                    : 'Check-out successful',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.green[700],
+                                ),
                               ),
                             ),
                           ],

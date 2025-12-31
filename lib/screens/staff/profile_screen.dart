@@ -1,6 +1,7 @@
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/material.dart';
+import '../../services/attendance_database.dart';
 import '../../models/attendance_record.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -11,171 +12,134 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  // Simple profile fields (cached/default) shown immediately
-  String name = 'Loading...';
-  String staffId = '--';
-  String role = '--';
-  String email = '--';
-  String joinDate = '--';
-  String status = 'Active';
+  final AttendanceDatabase _attendanceDb = AttendanceDatabase();
+  List<AttendanceRecord> _history = [];
+  bool _loadingHistory = true;
+  String? _historyError;
 
-  // Firestore-backed state
-  bool _profileLoading = false;
-  bool _historyLoading = false;
-  bool _hasMoreHistory = true;
-  String? _errorMessage;
-  final List<AttendanceRecord> _history = [];
-  DocumentSnapshot? _lastHistoryDoc;
-  static const int _pageSize = 10;
+  bool _loadingProfile = true;
+  String? _profileError;
+
+  String name = 'John Anderson';
+  String staffId = '2024001';
+  String role = 'Senior Developer';
+  String email = 'john.anderson@company.com';
+  String joinDate = 'Jan 15, 2024';
+  String status = 'Active';
 
   @override
   void initState() {
     super.initState();
-    // Auto-load profile in background but do not block UI.
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (mounted) _loadProfileSafely();
-    });
+    _loadProfile();
+    _loadHistory();
   }
 
-  Future<void> _loadProfileSafely() async {
-    if (_profileLoading) return;
+  Future<void> _loadProfile() async {
     setState(() {
-      _profileLoading = true;
-      _errorMessage = null;
+      _loadingProfile = true;
+      _profileError = null;
     });
-
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception('User not signed in');
-      final uid = user.uid;
-
-      // Try both 'users' and 'Users' collections to be tolerant of naming.
-      final usersColl = FirebaseFirestore.instance.collection('users');
-      final upperUsersColl = FirebaseFirestore.instance.collection('Users');
-
-      DocumentSnapshot<Map<String, dynamic>> doc = await usersColl
-          .doc(uid)
-          .get()
-          .timeout(const Duration(seconds: 6));
-      if (!doc.exists) {
-        doc = await upperUsersColl
-            .doc(uid)
-            .get()
-            .timeout(const Duration(seconds: 6));
-      }
-
-      if (!mounted) return;
-      final data = doc.data() ?? {};
-      setState(() {
-        name =
-            (data['displayName'] as String?) ??
-            (data['name'] as String?) ??
-            (data['fullName'] as String?) ??
-            (user.displayName ??
-                (user.email != null ? user.email!.split('@')[0] : 'Unknown'));
-        email = (data['email'] as String?) ?? (user.email ?? '--');
-        staffId =
-            (data['employeeId'] as String?) ??
-            (data['staffId'] as String?) ??
-            '--';
-        role = (data['role'] as String?) ?? '--';
-        joinDate = _resolveJoinDate(data, user);
-        status = (data['status'] as String?) ?? 'Active';
-      });
-
-      // Load initial history page
-      await _loadHistoryPage();
-    } catch (e) {
-      if (mounted) {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
         setState(() {
-          _errorMessage = 'Failed to load profile';
+          _loadingProfile = false;
+          _profileError = 'Not signed in';
         });
-      }
-      // Do not crash; show message
-    } finally {
-      if (mounted) {
-        setState(() {
-          _profileLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadHistoryPage() async {
-    if (_historyLoading || !_hasMoreHistory) return;
-    setState(() => _historyLoading = true);
-
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception('User not signed in');
-      final uid = user.uid;
-
-      Query q = FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('attendance')
-          .orderBy('date', descending: true)
-          .limit(_pageSize);
-
-      if (_lastHistoryDoc != null) q = q.startAfterDocument(_lastHistoryDoc!);
-
-      final snap = await q.get().timeout(const Duration(seconds: 6));
-      if (!mounted) return;
-
-      final docs = snap.docs;
-      if (docs.isEmpty) {
-        setState(() => _hasMoreHistory = false);
         return;
       }
 
-      final newRecords = docs.map((d) {
-        final data = d.data();
-        return AttendanceRecord.fromMap(data as Map<String, dynamic>, d.id);
-      }).toList();
+      final usersColl = FirebaseFirestore.instance.collection('users');
+      final upperUsersColl = FirebaseFirestore.instance.collection('Users');
+      DocumentSnapshot<Map<String, dynamic>> snap =
+          await usersColl.doc(uid).get();
+      if (!snap.exists) {
+        snap = await upperUsersColl.doc(uid).get();
+      }
+      final data = snap.data() ?? {};
 
       setState(() {
-        _history.addAll(newRecords);
-        _lastHistoryDoc = docs.last;
-        if (docs.length < _pageSize) _hasMoreHistory = false;
+        name = (data['name'] ??
+                data['fullName'] ??
+                data['staffName'] ??
+                data['email'] ??
+                name)
+            .toString();
+        staffId = (data['staffId'] ?? data['employeeId'] ?? data['userID'] ?? staffId)
+            .toString();
+        role = (data['role'] ?? role).toString();
+        email = (data['email'] ?? email).toString();
+        // Prefer explicit joinDate/createdAt fields, fall back to auth creation time
+        final createdAtField = data['joinDate'] ?? data['createdAt'];
+        if (createdAtField != null) {
+          try {
+            if (createdAtField is Timestamp) {
+              final dt = createdAtField.toDate();
+              joinDate = _formatDate(dt);
+            } else if (createdAtField is String) {
+              final dt = DateTime.parse(createdAtField);
+              joinDate = _formatDate(dt);
+            } else if (createdAtField is DateTime) {
+              joinDate = _formatDate(createdAtField);
+            }
+          } catch (_) {
+            // ignore parse errors, fallback below
+          }
+        } else if (FirebaseAuth.instance.currentUser?.metadata.creationTime != null) {
+          final dt = FirebaseAuth.instance.currentUser!.metadata.creationTime!;
+          joinDate = _formatDate(dt);
+        }
+        status = (data['status'] ?? status).toString();
+        _loadingProfile = false;
+      });
+    } catch (e) {
+      setState(() {
+        _loadingProfile = false;
+        _profileError = 'Failed to load profile';
+      });
+    }
+  }
+
+  Future<void> _loadHistory() async {
+    setState(() {
+      _loadingHistory = true;
+      _historyError = null;
+    });
+    try {
+      final records = await _attendanceDb.getAllAttendance();
+      setState(() {
+        _history = records;
+        _loadingHistory = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'Failed to load history';
+        _loadingHistory = false;
+        _historyError = 'Could not load attendance history.';
       });
-    } finally {
-      if (mounted) setState(() => _historyLoading = false);
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Present':
+        return Colors.green;
+      case 'Absent':
+        return Colors.red;
+      case 'Late':
+        return Colors.yellow[700]!;
+      default:
+        return Colors.grey;
     }
   }
 
   String _initials(String fullName) {
-    if (fullName.isEmpty) return '?';
-    final parts = fullName.trim().split(' ');
+    final parts = fullName.split(' ');
     if (parts.length == 1) return parts[0][0].toUpperCase();
     return (parts[0][0] + parts[1][0]).toUpperCase();
   }
 
-  String _formatDate(DateTime d) {
-    final m = d.month.toString().padLeft(2, '0');
-    final day = d.day.toString().padLeft(2, '0');
-    return '${d.year}-$m-$day';
-  }
-
-  DateTime? _parseDynamicDate(dynamic v) {
-    if (v == null) return null;
-    if (v is DateTime) return v;
-    if (v is Timestamp) return v.toDate();
-    if (v is String) {
-      try {
-        return DateTime.parse(v);
-      } catch (_) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  String _prettyDate(DateTime d) {
+  String _formatDate(DateTime date) {
     const months = [
       '',
       'Jan',
@@ -191,21 +155,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'Nov',
       'Dec',
     ];
-    return '${months[d.month]} ${d.day}, ${d.year}';
-  }
-
-  String _resolveJoinDate(Map<String, dynamic> data, User user) {
-    // Priority: explicit joinDate -> createdAt -> auth creationTime -> '--'
-    final jd = _parseDynamicDate(data['joinDate']);
-    if (jd != null) return _prettyDate(jd);
-
-    final created = _parseDynamicDate(data['createdAt']);
-    if (created != null) return _prettyDate(created);
-
-    final metaCreated = user.metadata.creationTime;
-    if (metaCreated != null) return _prettyDate(metaCreated);
-
-    return '--';
+    return '${months[date.month]} ${date.day}, ${date.year}';
   }
 
   DateTime? _parseTimeString(String? timeStr) {
@@ -240,209 +190,252 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Profile'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _profileLoading ? null : () => _loadProfileSafely(),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          _lastHistoryDoc = null;
-          _history.clear();
-          _hasMoreHistory = true;
-          await _loadProfileSafely();
-        },
+      backgroundColor: Colors.white,
+      body: SafeArea(
         child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Profile card
+                // Header
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Profile',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        if (_loadingProfile)
+                          const SizedBox(
+                            height: 16,
+                            width: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else if (_profileError != null)
+                          Text(
+                            _profileError!,
+                            style: TextStyle(
+                              color: Colors.red[700],
+                              fontSize: 14,
+                            ),
+                          )
+                        else
+                          Text(
+                            'Manage your account',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                // Profile Card with Avatar
                 Container(
-                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
+                    border: Border.all(color: Colors.grey[200]!),
                   ),
-                  child: Row(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       CircleAvatar(
-                        radius: 36,
+                        radius: 50,
                         backgroundColor: Colors.yellow[400],
                         child: Text(
                           _initials(name),
                           style: const TextStyle(
-                            fontSize: 20,
+                            fontSize: 32,
                             fontWeight: FontWeight.bold,
+                            color: Colors.black87,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              name,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              role,
-                              style: TextStyle(color: Colors.grey[700]),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              email,
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
+                      const SizedBox(height: 16),
+                      Text(
+                        name,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        role,
+                        style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green[100],
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          status,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.green[700],
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
 
-                // Account info
+                // Account Information Card
                 Container(
-                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
+                    border: Border.all(color: Colors.grey[200]!),
                   ),
+                  padding: const EdgeInsets.all(16),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       const Text(
                         'Account Information',
                         style: TextStyle(
-                          fontSize: 14,
+                          fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      _infoRow(Icons.badge, 'Employee ID', staffId),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 16),
+                      _infoRow(Icons.person, 'Employee ID', staffId),
+                      const SizedBox(height: 12),
+                      _infoRow(Icons.email, 'Email', email),
+                      const SizedBox(height: 12),
                       _infoRow(Icons.calendar_today, 'Join Date', joinDate),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 12),
                       _infoRow(Icons.info, 'Status', status),
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
 
-                // Error or loading indicator
-                if (_errorMessage != null) ...[
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red[50],
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      _errorMessage!,
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-
-                // Attendance history
+                // Attendance History Card
                 Container(
-                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
+                    border: Border.all(color: Colors.grey[200]!),
                   ),
+                  padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
                         'Attendance History',
                         style: TextStyle(
-                          fontSize: 14,
+                          fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      if (_history.isEmpty && _historyLoading)
-                        const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(12),
-                            child: CircularProgressIndicator(),
-                          ),
+                      const SizedBox(height: 12),
+                      if (_loadingHistory)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (_historyError != null)
+                        Text(
+                          _historyError!,
+                          style: TextStyle(color: Colors.red[700]),
                         )
                       else if (_history.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Text(
-                            'No recent records. Pull to refresh or tap load.',
-                            style: TextStyle(color: Colors.grey[600]),
-                          ),
+                        Text(
+                          'No records available.',
+                          style: TextStyle(color: Colors.grey[600]),
                         )
                       else
                         ListView.separated(
-                          physics: const NeverScrollableScrollPhysics(),
                           shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
                           itemCount: _history.length,
-                          separatorBuilder: (_, __) =>
-                              const Divider(height: 12),
-                          itemBuilder: (context, i) {
-                            final rec = _history[i];
-                            return Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          separatorBuilder: (context, index) =>
+                              const Divider(height: 16),
+                          itemBuilder: (context, index) {
+                            final record = _history[index];
+                            final statusColor = _getStatusColor(record.status);
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(
-                                      _formatDate(rec.date),
+                                      _formatDate(record.date),
                                       style: const TextStyle(
+                                        fontSize: 14,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${rec.checkInTime ?? '--'} • ${rec.checkOutTime ?? '--'}',
-                                      style: TextStyle(
-                                        color: Colors.grey[600],
-                                        fontSize: 13,
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: statusColor.withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        record.status,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: statusColor,
+                                        ),
                                       ),
                                     ),
                                   ],
                                 ),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                const SizedBox(height: 6),
+                                Row(
                                   children: [
+                                    Icon(
+                                      Icons.schedule,
+                                      size: 16,
+                                      color: Colors.grey[600],
+                                    ),
+                                    const SizedBox(width: 6),
                                     Text(
-                                      rec.status,
+                                      (record.checkInTime != null &&
+                                              record.checkOutTime != null)
+                                          ? '${record.checkInTime} - ${record.checkOutTime}'
+                                          : 'N/A',
                                       style: TextStyle(
-                                        color: _getStatusColor(rec.status),
-                                        fontWeight: FontWeight.w700,
+                                        color: Colors.grey[700],
+                                        fontSize: 12,
                                       ),
                                     ),
-                                    const SizedBox(height: 4),
+                                    const Spacer(),
                                     Text(
-                                      _workingHours(rec),
+                                      _workingHours(record),
                                       style: const TextStyle(
                                         fontSize: 12,
-                                        color: Colors.grey,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                   ],
@@ -451,33 +444,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             );
                           },
                         ),
-
-                      const SizedBox(height: 8),
-                      if (_hasMoreHistory)
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton(
-                            onPressed: _historyLoading
-                                ? null
-                                : () => _loadHistoryPage(),
-                            child: _historyLoading
-                                ? const SizedBox(
-                                    height: 18,
-                                    width: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Text('Load more'),
-                          ),
-                        ),
                     ],
                   ),
                 ),
-
                 const SizedBox(height: 24),
 
-                // Logout button
+                // Logout Button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -498,6 +470,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 20),
               ],
             ),
           ),
@@ -509,41 +482,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _infoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 18, color: Colors.grey[600]),
+        Icon(icon, size: 20, color: Colors.grey[600]),
         const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              value,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            ),
+          ],
         ),
       ],
     );
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'Present':
-        return Colors.green;
-      case 'Absent':
-        return Colors.red;
-      case 'Late':
-        return Colors.orange;
-      default:
-        return Colors.grey;
-    }
   }
 }

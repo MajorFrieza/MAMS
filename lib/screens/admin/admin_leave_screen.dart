@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AdminLeaveScreen extends StatefulWidget {
   const AdminLeaveScreen({super.key});
@@ -316,6 +317,8 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                   'days': days,
                   'appliedDate': data['appliedDate'] ?? '',
                   'reason': data['reason'] ?? '',
+                  'attachmentUrl': data['attachmentUrl'],
+                  'attachmentName': data['attachmentName'],
                 };
               }).toList();
 
@@ -425,6 +428,25 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
   void dispose() {
     _leaveRequestsSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _openAttachment(String url) async {
+    try {
+      final uri = Uri.parse(url);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open attachment')),
+          );
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open attachment')),
+        );
+      }
+    }
   }
 
   @override
@@ -642,6 +664,13 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                           applied: formatDate(
                             leave['appliedDate'] as String? ?? '',
                           ),
+                          attachmentUrl: leave['attachmentUrl'] as String?,
+                          attachmentName: leave['attachmentName'] as String?,
+                          onViewAttachment: leave['attachmentUrl'] != null
+                              ? () => _openAttachment(
+                                leave['attachmentUrl'] as String,
+                              )
+                              : null,
                           onApprove: () => _updateLeaveStatus(
                             leave['staffId'] as String,
                             leave['docId'] as String,
@@ -796,6 +825,9 @@ class _LeaveCard extends StatelessWidget {
     required this.type,
     required this.period,
     required this.applied,
+    this.attachmentUrl,
+    this.attachmentName,
+    this.onViewAttachment,
     required this.onApprove,
     required this.onReject,
   });
@@ -805,6 +837,9 @@ class _LeaveCard extends StatelessWidget {
   final String type;
   final String period;
   final String applied;
+  final String? attachmentUrl;
+  final String? attachmentName;
+  final VoidCallback? onViewAttachment;
   final VoidCallback onApprove;
   final VoidCallback onReject;
 
@@ -942,6 +977,18 @@ class _LeaveCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
+        if (attachmentUrl != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: OutlinedButton.icon(
+              onPressed: onViewAttachment,
+              icon: const Icon(Icons.insert_drive_file),
+              label: Text(
+                attachmentName ?? 'View attachment',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
         if (isPending)
           Row(
             children: [

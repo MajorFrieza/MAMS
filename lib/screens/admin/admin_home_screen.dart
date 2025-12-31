@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({super.key});
@@ -17,6 +19,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   int _absentCount = 0;
   int _lateCount = 0;
   List<_StaffAttendance> _staff = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _attendanceSub;
+  final List<StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
+      _staffAttendanceSubs = [];
 
   static const _textGreen600 = Color(0xFF16A34A);
   static const _bgRed50 = Color(0xFFFEF2F2);
@@ -32,6 +37,8 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   }
 
   Future<void> _loadToday() async {
+    await _attendanceSub?.cancel();
+    await _cancelStaffSubscriptions();
     setState(() {
       _loading = true;
       _error = null;
@@ -65,78 +72,10 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           note: 'No check-in recorded',
         );
       }
-
-      // Today range
-      final now = DateTime.now();
-      final startOfDay = DateTime(now.year, now.month, now.day);
-      final endOfDay = startOfDay.add(const Duration(days: 1));
-
-      // Batch queries: process in chunks of 10 to avoid blocking UI
-      int present = 0;
-      int late = 0;
-      final entries = staffUsers.entries.toList();
-
-      for (int i = 0; i < entries.length; i += 10) {
-        final chunk = entries.sublist(
-          i,
-          i + 10 > entries.length ? entries.length : i + 10,
-        );
-
-        // Process this chunk in parallel
-        await Future.wait(
-          chunk.map((entry) async {
-            final uid = entry.key;
-            final existing = entry.value;
-            try {
-              final snap = await firestore
-                  .collection('users')
-                  .doc(uid)
-                  .collection('attendance')
-                  .where(
-                    'date',
-                    isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
-                  )
-                  .where('date', isLessThan: Timestamp.fromDate(endOfDay))
-                  .limit(1)
-                  .get();
-
-              if (snap.docs.isEmpty) return;
-
-              final data = snap.docs.first.data();
-              final status = (data['status'] ?? 'Present').toString();
-              final checkIn = data['checkInTime']?.toString();
-
-              final updated = _StaffAttendance(
-                userId: uid,
-                staffId: existing.staffId,
-                name: existing.name,
-                status: status,
-                note: checkIn != null
-                    ? 'Check-in: $checkIn'
-                    : 'No check-in recorded',
-              );
-
-              staffUsers[uid] = updated;
-              if (status.toLowerCase() == 'present') present++;
-              if (status.toLowerCase() == 'late') late++;
-            } catch (e) {
-              // ignore error for individual staff
-            }
-          }),
-        );
-      }
-
-      final totalStaff = staffUsers.length;
-      final absent = totalStaff - (present + late);
-
-      if (!mounted) return;
       setState(() {
-        _presentCount = present;
-        _lateCount = late;
-        _absentCount = absent < 0 ? 0 : absent;
         _staff = staffUsers.values.toList();
-        _loading = false;
       });
+      _listenToTodayPerStaff(firestore, staffUsers);
     } catch (e) {
       debugPrint('Admin attendance load error: $e');
       if (!mounted) return;
@@ -144,6 +83,90 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         _loading = false;
         _error = 'Failed to load attendance. ${e.toString()}';
       });
+    }
+  }
+
+  void _listenToTodayPerStaff(
+    FirebaseFirestore firestore,
+    Map<String, _StaffAttendance> staffUsers,
+  ) {
+    final nowLocal = DateTime.now().toLocal();
+    final startOfDayUtc =
+        DateTime(nowLocal.year, nowLocal.month, nowLocal.day).toUtc();
+    final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
+
+    // Start one listener per staff (limited to first 100 staff).
+    for (final entry in staffUsers.entries) {
+      final uid = entry.key;
+      final sub = firestore
+          .collection('users')
+          .doc(uid)
+          .collection('attendance')
+          .where('date',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDayUtc))
+          .where('date', isLessThan: Timestamp.fromDate(endOfDayUtc))
+          .limit(1)
+          .snapshots()
+          .listen(
+        (snapshot) {
+          final existing = staffUsers[uid]!;
+
+          if (snapshot.docs.isEmpty) {
+            // No attendance for today: keep as absent.
+            staffUsers[uid] = _StaffAttendance(
+              userId: uid,
+              staffId: existing.staffId,
+              name: existing.name,
+              status: 'Absent',
+              note: 'No check-in recorded',
+            );
+          } else {
+            final data = snapshot.docs.first.data();
+            final status = (data['status'] ?? 'Present').toString();
+            final checkIn = data['checkInTime']?.toString();
+            staffUsers[uid] = _StaffAttendance(
+              userId: uid,
+              staffId: existing.staffId,
+              name: existing.name,
+              status: status,
+              note:
+                  checkIn != null ? 'Check-in: $checkIn' : 'No check-in recorded',
+            );
+          }
+
+          // Recompute counts on each update.
+          int present = 0;
+          int late = 0;
+          for (final item in staffUsers.values) {
+            final status = item.status.toLowerCase();
+            if (status == 'present') present++;
+            if (status == 'late') late++;
+          }
+          final totalStaff = staffUsers.length;
+          // Late staff are still counted as present for headcount.
+          final presentIncludingLate = present + late;
+          final absent = totalStaff - presentIncludingLate;
+
+          if (!mounted) return;
+          setState(() {
+            _presentCount = presentIncludingLate;
+            _lateCount = late;
+            _absentCount = absent < 0 ? 0 : absent;
+            _staff = staffUsers.values.toList();
+            _loading = false;
+            _error = null;
+          });
+        },
+        onError: (e) {
+          if (!mounted) return;
+          setState(() {
+            _error = 'Failed to load attendance. ${e.toString()}';
+            _loading = false;
+          });
+        },
+      );
+
+      _staffAttendanceSubs.add(sub);
     }
   }
 
@@ -164,9 +187,29 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
 
   List<_StaffAttendance> _filteredStaff() {
     if (_selectedFilter == null) return _staff;
-    return _staff
-        .where((s) => s.status.toLowerCase() == _selectedFilter!.toLowerCase())
-        .toList();
+    final filter = _selectedFilter!.toLowerCase();
+    return _staff.where((s) {
+      final status = s.status.toLowerCase();
+      if (filter == 'present') {
+        // Treat late as present in the present view.
+        return status == 'present' || status == 'late';
+      }
+      return status == filter;
+    }).toList();
+  }
+
+  @override
+  void dispose() {
+    _attendanceSub?.cancel();
+    _cancelStaffSubscriptions();
+    super.dispose();
+  }
+
+  Future<void> _cancelStaffSubscriptions() async {
+    for (final sub in _staffAttendanceSubs) {
+      await sub.cancel();
+    }
+    _staffAttendanceSubs.clear();
   }
 
   @override

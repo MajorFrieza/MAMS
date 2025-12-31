@@ -90,14 +90,16 @@ class AttendanceDatabase {
   /// Get attendance record for today
   Future<AttendanceRecord?> getTodayAttendance() async {
     try {
-      final today = DateTime.now();
-      final startOfDay = DateTime(today.year, today.month, today.day);
-      final endOfDay = startOfDay.add(const Duration(days: 1));
+      final todayLocal = DateTime.now().toLocal();
+      final startOfDayUtc =
+          DateTime(todayLocal.year, todayLocal.month, todayLocal.day).toUtc();
+      final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
 
       final collection = _getAttendanceCollection();
       final querySnapshot = await collection
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-          .where('date', isLessThan: Timestamp.fromDate(endOfDay))
+          .where('date',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDayUtc))
+          .where('date', isLessThan: Timestamp.fromDate(endOfDayUtc))
           .limit(1)
           .get();
 
@@ -236,13 +238,15 @@ class AttendanceDatabase {
   /// Stream today's attendance
   Stream<AttendanceRecord?> streamTodayAttendance() {
     try {
-      final today = DateTime.now();
-      final startOfDay = DateTime(today.year, today.month, today.day);
-      final endOfDay = startOfDay.add(const Duration(days: 1));
+      final todayLocal = DateTime.now().toLocal();
+      final startOfDayUtc =
+          DateTime(todayLocal.year, todayLocal.month, todayLocal.day).toUtc();
+      final endOfDayUtc = startOfDayUtc.add(const Duration(days: 1));
 
       return _getAttendanceCollection()
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-          .where('date', isLessThan: Timestamp.fromDate(endOfDay))
+          .where('date',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDayUtc))
+          .where('date', isLessThan: Timestamp.fromDate(endOfDayUtc))
           .limit(1)
           .snapshots()
           .map((snapshot) {
