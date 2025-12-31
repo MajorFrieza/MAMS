@@ -5,6 +5,7 @@ import '../../services/face_recognition_service.dart';
 import '../../models/attendance_record.dart';
 import '../../services/attendance_database.dart';
 import '../../services/location_service.dart';
+import '../../services/working_hours.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
 
@@ -183,8 +184,11 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
 
       // Normalize date to midnight using device-local time (matches queries in AttendanceDatabase)
       final nowLocal = DateTime.now();
-      final dateAtMidnight =
-          DateTime(nowLocal.year, nowLocal.month, nowLocal.day);
+      final dateAtMidnight = DateTime(
+        nowLocal.year,
+        nowLocal.month,
+        nowLocal.day,
+      );
 
       // Create or update attendance record
       // Fetch position and address when possible to store both coords and readable address
@@ -199,13 +203,23 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
 
       var todayAttendance = await _database.getTodayAttendance();
 
+      // Determine status based on check-in time and working hours
+      String status = 'Present';
+      if (widget.attendanceType == 'checkIn') {
+        final now = DateTime.now();
+        status = WorkingHours.determineStatus(
+          checkInTime: now,
+          weekday: now.weekday,
+        );
+      }
+
       if (todayAttendance == null) {
         // New record
         todayAttendance = AttendanceRecord(
           date: dateAtMidnight,
           checkInTime: widget.attendanceType == 'checkIn' ? timeString : null,
           checkOutTime: widget.attendanceType == 'checkOut' ? timeString : null,
-          status: 'Present',
+          status: status,
           faceImagePath: image.path,
           locationCoords: coords,
           locationAddress: addr ?? widget.location,
@@ -349,68 +363,68 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
                     ),
                   ),
 
-                      SizedBox(height: 24),
+                  SizedBox(height: 24),
 
-                      // Buttons
-                      if (!_processingComplete)
-                        Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 16),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: () => Navigator.pop(context),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.grey[400],
-                                    padding: EdgeInsets.symmetric(vertical: 16),
-                                  ),
-                                  child: Text(
-                                    'Cancel',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.black,
-                                    ),
-                                  ),
+                  // Buttons
+                  if (!_processingComplete)
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => Navigator.pop(context),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.grey[400],
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                              ),
+                              child: Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black,
                                 ),
                               ),
-                              SizedBox(width: 12),
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: _faceDetected && !_isProcessing
-                                      ? _processFaceRecognition
-                                      : null,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: _faceDetected
-                                        ? Colors.green
-                                        : Colors.grey[400],
-                                    padding: EdgeInsets.symmetric(vertical: 16),
-                                  ),
-                                  child: _isProcessing
-                                      ? SizedBox(
-                                          height: 20,
-                                          width: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _faceDetected && !_isProcessing
+                                  ? _processFaceRecognition
+                                  : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _faceDetected
+                                    ? Colors.green
+                                    : Colors.grey[400],
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                              ),
+                              child: _isProcessing
+                                  ? SizedBox(
+                                      height: 20,
+                                      width: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
                                               Colors.white,
                                             ),
-                                          ),
-                                        )
-                                      : Text(
-                                          'Confirm',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                ),
-                              ),
-                            ],
+                                      ),
+                                    )
+                                  : Text(
+                                      'Confirm',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                            ),
                           ),
-                        ),
+                        ],
+                      ),
+                    ),
 
                   // Success message
                   if (_processingComplete && _isSuccess)

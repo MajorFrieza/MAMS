@@ -90,22 +90,94 @@ class _LeaveScreenState extends State<LeaveScreen> {
     try {
       String? attachmentUrl;
       if (_selectedFile != null) {
-        final storageRef = FirebaseStorage.instance
-            .ref()
-            .child('leave_attachments')
-            .child(user.uid)
-            .child(
-              '${DateTime.now().millisecondsSinceEpoch}_${_selectedFile!.name}',
-            );
+        try {
+          // Validate file before upload
+          if (_selectedFile!.bytes == null && _selectedFile!.path == null) {
+            throw Exception('File is empty or invalid');
+          }
 
-        if (_selectedFile!.bytes != null) {
-          final data = _selectedFile!.bytes!;
-          final uploadTask = await storageRef.putData(data);
-          attachmentUrl = await uploadTask.ref.getDownloadURL();
-        } else if (_selectedFile!.path != null) {
-          final file = File(_selectedFile!.path!);
-          final uploadTask = await storageRef.putFile(file);
-          attachmentUrl = await uploadTask.ref.getDownloadURL();
+          // If path is provided, verify the file exists
+          if (_selectedFile!.path != null &&
+              !await File(_selectedFile!.path!).exists()) {
+            throw Exception('File not found at ${_selectedFile!.path}');
+          }
+
+          final storageRef = FirebaseStorage.instance
+              .ref()
+              .child('leave_attachments')
+              .child(user.uid)
+              .child(
+                '${DateTime.now().millisecondsSinceEpoch}_${_selectedFile!.name}',
+              );
+
+          if (_selectedFile!.bytes != null) {
+            final data = _selectedFile!.bytes!;
+            final uploadTask = await storageRef
+                .putData(data)
+                .timeout(
+                  const Duration(seconds: 30),
+                  onTimeout: () => throw Exception('Upload timed out'),
+                );
+            if (uploadTask.state != TaskState.success) {
+              throw Exception('Upload failed: ${uploadTask.state}');
+            }
+            try {
+              attachmentUrl = await uploadTask.ref.getDownloadURL();
+            } catch (e) {
+              // If we can't get download URL due to permissions, upload was successful
+              // but we'll just skip the URL. The file is uploaded and the reference
+              // is 'leave_attachments/{uid}/{timestamp}_{filename}'
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'File uploaded but download URL unavailable. Admin can still access via Firebase Console.',
+                    ),
+                  ),
+                );
+              }
+              attachmentUrl = null;
+            }
+          } else if (_selectedFile!.path != null) {
+            final file = File(_selectedFile!.path!);
+            final uploadTask = await storageRef
+                .putFile(file)
+                .timeout(
+                  const Duration(seconds: 30),
+                  onTimeout: () => throw Exception('Upload timed out'),
+                );
+            if (uploadTask.state != TaskState.success) {
+              throw Exception('Upload failed: ${uploadTask.state}');
+            }
+            try {
+              attachmentUrl = await uploadTask.ref.getDownloadURL();
+            } catch (e) {
+              // If we can't get download URL due to permissions, upload was successful
+              // but we'll just skip the URL. The file is uploaded and the reference
+              // is 'leave_attachments/{uid}/{timestamp}_{filename}'
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'File uploaded but download URL unavailable. Admin can still access via Firebase Console.',
+                    ),
+                  ),
+                );
+              }
+              attachmentUrl = null;
+            }
+          }
+        } catch (uploadErr) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Attachment upload failed: ${uploadErr.toString()}',
+                ),
+              ),
+            );
+          }
+          return;
         }
       }
 
