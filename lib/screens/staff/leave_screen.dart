@@ -28,6 +28,8 @@ class _LeaveScreenState extends State<LeaveScreen> {
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _leaveSub;
   StreamSubscription? _balanceSub; // Real-time balance updates
+  bool _isUploading = false;
+  double _uploadProgress = 0.0;
 
   Future<void> _pickFile() async {
     try {
@@ -45,9 +47,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
         if (sizeBytes > maxBytes) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('File too large. Max size is 5MB.'),
-            ),
+            const SnackBar(content: Text('File too large. Max size is 5MB.')),
           );
           return;
         }
@@ -103,107 +103,10 @@ class _LeaveScreenState extends State<LeaveScreen> {
     }
 
     try {
-      String? attachmentUrl;
       String? attachmentName;
+
       if (_selectedFile != null) {
         attachmentName = _selectedFile!.name;
-        try {
-          // Validate file before upload
-          if (_selectedFile!.bytes == null && _selectedFile!.path == null) {
-            throw Exception('File is empty or invalid');
-          }
-
-          // If path is provided, verify the file exists
-          if (_selectedFile!.path != null &&
-              !await File(_selectedFile!.path!).exists()) {
-            throw Exception('File not found at ${_selectedFile!.path}');
-          }
-
-          final storageRef = FirebaseStorage.instance
-              .ref()
-              .child('leave_attachments')
-              .child(user.uid)
-              .child(
-                '${DateTime.now().millisecondsSinceEpoch}_${_selectedFile!.name}',
-              );
-
-          final ext = (_selectedFile!.extension ?? '').toLowerCase();
-          String? contentType;
-          if (ext == 'pdf') contentType = 'application/pdf';
-          if (ext == 'jpg' || ext == 'jpeg') contentType = 'image/jpeg';
-          if (ext == 'png') contentType = 'image/png';
-
-          final metadata = SettableMetadata(contentType: contentType);
-
-          if (_selectedFile!.bytes != null) {
-            final data = _selectedFile!.bytes!;
-            final uploadTask = await storageRef
-                .putData(data, metadata)
-                .timeout(
-                  const Duration(seconds: 30),
-                  onTimeout: () => throw Exception('Upload timed out'),
-                );
-            if (uploadTask.state != TaskState.success) {
-              throw Exception('Upload failed: ${uploadTask.state}');
-            }
-            try {
-              attachmentUrl = await uploadTask.ref.getDownloadURL();
-            } catch (e) {
-              // If we can't get download URL due to permissions, upload was successful
-              // but we'll just skip the URL. The file is uploaded and the reference
-              // is 'leave_attachments/{uid}/{timestamp}_{filename}'
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'File uploaded but download URL unavailable. Admin can still access via Firebase Console.',
-                    ),
-                  ),
-                );
-              }
-              attachmentUrl = null;
-            }
-          } else if (_selectedFile!.path != null) {
-            final file = File(_selectedFile!.path!);
-            final uploadTask = await storageRef
-                .putFile(file, metadata)
-                .timeout(
-                  const Duration(seconds: 30),
-                  onTimeout: () => throw Exception('Upload timed out'),
-                );
-            if (uploadTask.state != TaskState.success) {
-              throw Exception('Upload failed: ${uploadTask.state}');
-            }
-            try {
-              attachmentUrl = await uploadTask.ref.getDownloadURL();
-            } catch (e) {
-              // If we can't get download URL due to permissions, upload was successful
-              // but we'll just skip the URL. The file is uploaded and the reference
-              // is 'leave_attachments/{uid}/{timestamp}_{filename}'
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'File uploaded but download URL unavailable. Admin can still access via Firebase Console.',
-                    ),
-                  ),
-                );
-              }
-              attachmentUrl = null;
-            }
-          }
-        } catch (uploadErr) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Attachment upload failed: ${uploadErr.toString()}',
-                ),
-              ),
-            );
-          }
-          return;
-        }
       }
 
       final doc = {
@@ -213,8 +116,9 @@ class _LeaveScreenState extends State<LeaveScreen> {
         'startDate': startDate!.toIso8601String(),
         'endDate': endDate!.toIso8601String(),
         'reason': '',
-        'attachmentUrl': attachmentUrl,
+        'attachmentUrl': null,
         'attachmentName': attachmentName,
+        'attachmentStatus': _selectedFile != null ? 'pending' : null,
         'status': 'Pending',
         'adminComment': null,
         'appliedDate': DateTime.now().toIso8601String(),
@@ -223,15 +127,18 @@ class _LeaveScreenState extends State<LeaveScreen> {
         'updatedAt': null,
       };
 
-      await FirebaseFirestore.instance
+      // Create the leave request immediately so user sees quick submit.
+      final docRef = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .collection('leaveRequests')
           .add(doc);
 
-      // Do not locally insert an optimistic copy — rely on the realtime
-      // Firestore listener to update `leaveHistory`. Just reset the form
-      // after the write completes to avoid temporary duplicate entries.
+      // Capture the selected file locally before we reset the form
+      final PlatformFile? fileToUpload = _selectedFile;
+      final String? fileNameToUse = attachmentName;
+
+      // Reset form immediately for perceived responsiveness
       if (mounted) {
         setState(() {
           selectedLeaveType = null;
@@ -247,11 +154,140 @@ class _LeaveScreenState extends State<LeaveScreen> {
           const SnackBar(content: Text('Leave request submitted')),
         );
       }
+
+      // If there was an attachment, upload it in the background and update the doc when done
+      if (fileToUpload != null) {
+        // Fire-and-forget background upload; errors handled inside
+        _uploadAttachmentToDoc(
+          docRef,
+          fileToUpload,
+          fileNameToUse ?? 'attachment',
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Submit failed: $e')));
+      }
+    }
+  }
+
+  Future<void> _uploadAttachmentToDoc(
+    DocumentReference docRef,
+    PlatformFile file,
+    String attachmentName,
+  ) async {
+    try {
+      // Validate file
+      if (file.bytes == null && file.path == null) {
+        await docRef.update({
+          'attachmentStatus': 'failed',
+          'attachmentError': 'File invalid',
+        });
+        return;
+      }
+
+      if (file.path != null && !await File(file.path!).exists()) {
+        await docRef.update({
+          'attachmentStatus': 'failed',
+          'attachmentError': 'File not found',
+        });
+        return;
+      }
+
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        await docRef.update({
+          'attachmentStatus': 'failed',
+          'attachmentError': 'User not signed in',
+        });
+        return;
+      }
+
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('leave_attachments')
+          .child(user.uid)
+          .child('${DateTime.now().millisecondsSinceEpoch}_$attachmentName');
+
+      final ext = (file.extension ?? '').toLowerCase();
+      String? contentType;
+      if (ext == 'pdf') contentType = 'application/pdf';
+      if (ext == 'jpg' || ext == 'jpeg') contentType = 'image/jpeg';
+      if (ext == 'png') contentType = 'image/png';
+
+      final metadata = SettableMetadata(contentType: contentType);
+
+      UploadTask uploadTask;
+      if (file.bytes != null) {
+        uploadTask = storageRef.putData(file.bytes!, metadata);
+      } else {
+        uploadTask = storageRef.putFile(File(file.path!), metadata);
+      }
+
+      // Track progress in UI
+      if (mounted) {
+        setState(() {
+          _isUploading = true;
+          _uploadProgress = 0.0;
+        });
+      }
+
+      final sub = uploadTask.snapshotEvents.listen((snap) {
+        final total = snap.totalBytes;
+        final transferred = snap.bytesTransferred;
+        double progress = 0.0;
+        if (total > 0) progress = transferred / total;
+        if (mounted) {
+          setState(() => _uploadProgress = progress);
+        }
+      });
+
+      TaskSnapshot snapshot;
+      try {
+        snapshot = await uploadTask.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => throw Exception('Upload timed out'),
+        );
+      } finally {
+        await sub.cancel();
+      }
+
+      if (snapshot.state != TaskState.success) {
+        await docRef.update({
+          'attachmentStatus': 'failed',
+          'attachmentError': 'Upload failed: ${snapshot.state}',
+        });
+        return;
+      }
+
+      try {
+        final url = await snapshot.ref.getDownloadURL();
+        await docRef.update({
+          'attachmentUrl': url,
+          'attachmentStatus': 'uploaded',
+        });
+      } catch (e) {
+        // Upload succeeded but download URL unavailable (permissions); mark accordingly
+        await docRef.update({
+          'attachmentStatus': 'uploaded_no_url',
+          'attachmentError': e.toString(),
+        });
+      }
+    } catch (e) {
+      try {
+        await docRef.update({
+          'attachmentStatus': 'failed',
+          'attachmentError': e.toString(),
+        });
+      } catch (_) {}
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+          _uploadProgress = 0.0;
+        });
       }
     }
   }
@@ -278,6 +314,19 @@ class _LeaveScreenState extends State<LeaveScreen> {
                   style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                 ),
                 SizedBox(height: 24),
+                if (_isUploading)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      LinearProgressIndicator(value: _uploadProgress),
+                      SizedBox(height: 8),
+                      Text(
+                        'Uploading attachment... ${(_uploadProgress * 100).toStringAsFixed(0)}%',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                      ),
+                      SizedBox(height: 16),
+                    ],
+                  ),
 
                 // Leave Balance Card
                 Container(
@@ -615,8 +664,10 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                 ),
                               ),
                               GestureDetector(
-                                onTap: () =>
-                                    setState(() => selectedFileName = null),
+                                onTap: () => setState(() {
+                                  selectedFileName = null;
+                                  _selectedFile = null;
+                                }),
                                 child: Icon(
                                   Icons.close,
                                   size: 18,
@@ -687,11 +738,11 @@ class _LeaveScreenState extends State<LeaveScreen> {
                             Divider(height: 20),
                         itemBuilder: (context, index) {
                           final leave = leaveHistory[index];
-                          final isApproved =
-                              (leave['status'] ?? '')
-                                  .toString()
-                                  .toLowerCase() ==
-                              'approved';
+                          final statusLower = (leave['status'] ?? '')
+                              .toString()
+                              .toLowerCase();
+                          final isApproved = statusLower == 'approved';
+                          final isPending = statusLower == 'pending';
 
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -731,6 +782,8 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                     decoration: BoxDecoration(
                                       color: isApproved
                                           ? Colors.green[100]
+                                          : isPending
+                                          ? Colors.yellow[100]
                                           : Colors.red[100],
                                       borderRadius: BorderRadius.circular(20),
                                     ),
@@ -740,10 +793,14 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                         Icon(
                                           isApproved
                                               ? Icons.check_circle
+                                              : isPending
+                                              ? Icons.access_time
                                               : Icons.cancel,
                                           size: 16,
                                           color: isApproved
                                               ? Colors.green
+                                              : isPending
+                                              ? Colors.orange
                                               : Colors.red,
                                         ),
                                         SizedBox(width: 4),
@@ -754,6 +811,8 @@ class _LeaveScreenState extends State<LeaveScreen> {
                                             fontWeight: FontWeight.w600,
                                             color: isApproved
                                                 ? Colors.green
+                                                : isPending
+                                                ? Colors.orange
                                                 : Colors.red,
                                           ),
                                         ),
@@ -986,7 +1045,8 @@ class _LeaveScreenState extends State<LeaveScreen> {
                   'status': m['status'] ?? '',
                   'appliedDate': formatApplied(m['appliedDate'] ?? ''),
                   'attachmentUrl': m['attachmentUrl'],
-                  'attachmentName': m['attachmentName'] ??
+                  'attachmentName':
+                      m['attachmentName'] ??
                       (m['attachmentUrl'] != null
                           ? (m['attachmentUrl'] as String).split('/').last
                           : null),
