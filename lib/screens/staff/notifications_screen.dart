@@ -244,7 +244,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Track your leave request approvals and rejections (Real-time)',
+                    'Track your leave request approvals and rejections',
                     style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                   ),
                   const SizedBox(height: 8),
