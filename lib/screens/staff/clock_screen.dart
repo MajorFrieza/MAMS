@@ -28,9 +28,15 @@ class _ClockScreenState extends State<ClockScreen> {
   bool _showSummary = false;
   String _currentLocation = "Loading location...";
   bool _loadingLocation = true;
-  // replace with with Mutiara lat long
-  static const double _officeLat = 1.458066;
-  static const double _officeLng = 110.454651;
+  // Tok location ofis Mtech
+  //static const double _officeLat = 1.606466;
+  //static const double _officeLng = 110.342264;
+
+  //Tok location Fakulti
+  //static const double _officeLat = 1.468160;
+  //static const double _officeLng = 110.429021;
+  static const double _officeLat = 1.5902946383440368;
+  static const double _officeLng = 110.41580373862368;
   static const double _allowedRadiusMeters = 150;
   bool _dayComplete = false;
   int _currentDay = DateTime.now().day;
@@ -485,7 +491,10 @@ class _ClockScreenState extends State<ClockScreen> {
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.location_off, color: Colors.red[700]),
+                                Icon(
+                                  Icons.location_off,
+                                  color: Colors.red[700],
+                                ),
                                 SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
@@ -497,7 +506,10 @@ class _ClockScreenState extends State<ClockScreen> {
                                   ),
                                 ),
                                 IconButton(
-                                  icon: Icon(Icons.refresh, color: Colors.red[700]),
+                                  icon: Icon(
+                                    Icons.refresh,
+                                    color: Colors.red[700],
+                                  ),
                                   onPressed: _refreshGeofence,
                                 ),
                               ],
@@ -508,9 +520,8 @@ class _ClockScreenState extends State<ClockScreen> {
                           children: [
                             Expanded(
                               child: ElevatedButton.icon(
-                                onPressed: (_geoAllowed &&
-                                        !checkedIn &&
-                                        !_dayComplete)
+                                onPressed:
+                                    (_geoAllowed && !checkedIn && !_dayComplete)
                                     ? _checkIn
                                     : null,
                                 icon: Icon(Icons.camera_alt),
@@ -518,7 +529,9 @@ class _ClockScreenState extends State<ClockScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: checkedIn
                                       ? Colors.grey[400]
-                                      : (_geoAllowed ? Colors.green : Colors.grey[300]),
+                                      : (_geoAllowed
+                                            ? Colors.green
+                                            : Colors.grey[300]),
                                   padding: EdgeInsets.symmetric(vertical: 16),
                                   textStyle: TextStyle(fontSize: 16),
                                 ),
@@ -527,9 +540,8 @@ class _ClockScreenState extends State<ClockScreen> {
                             SizedBox(width: 10),
                             Expanded(
                               child: ElevatedButton.icon(
-                                onPressed: (_geoAllowed &&
-                                        checkedIn &&
-                                        !_dayComplete)
+                                onPressed:
+                                    (_geoAllowed && checkedIn && !_dayComplete)
                                     ? _checkOut
                                     : null,
                                 icon: Icon(Icons.camera_alt),

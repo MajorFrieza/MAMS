@@ -1,7 +1,6 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../services/attendance_database.dart';
+import 'package:flutter/material.dart';
 import '../../models/attendance_record.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -12,109 +11,171 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final AttendanceDatabase _attendanceDb = AttendanceDatabase();
-  List<AttendanceRecord> _history = [];
-  bool _loadingHistory = true;
-  String? _historyError;
-  bool _loadingProfile = true;
-  String? _profileError;
-  String name = 'John Anderson';
-  String staffId = '2024001';
-  String role = 'Senior Developer';
-  String email = 'john.anderson@company.com';
-  String joinDate = 'Jan 15, 2024';
+  // Simple profile fields (cached/default) shown immediately
+  String name = 'Loading...';
+  String staffId = '--';
+  String role = '--';
+  String email = '--';
+  String joinDate = '--';
   String status = 'Active';
+
+  // Firestore-backed state
+  bool _profileLoading = false;
+  bool _historyLoading = false;
+  bool _hasMoreHistory = true;
+  String? _errorMessage;
+  final List<AttendanceRecord> _history = [];
+  DocumentSnapshot? _lastHistoryDoc;
+  static const int _pageSize = 10;
 
   @override
   void initState() {
     super.initState();
-    _loadProfile();
-    _loadHistory();
+    // Auto-load profile in background but do not block UI.
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) _loadProfileSafely();
+    });
   }
 
-  Future<void> _loadProfile() async {
+  Future<void> _loadProfileSafely() async {
+    if (_profileLoading) return;
     setState(() {
-      _loadingProfile = true;
-      _profileError = null;
+      _profileLoading = true;
+      _errorMessage = null;
     });
+
     try {
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid == null) {
-        setState(() {
-          _loadingProfile = false;
-          _profileError = 'Not signed in';
-        });
-        return;
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User not signed in');
+      final uid = user.uid;
+
+      // Try both 'users' and 'Users' collections to be tolerant of naming.
+      final usersColl = FirebaseFirestore.instance.collection('users');
+      final upperUsersColl = FirebaseFirestore.instance.collection('Users');
+
+      DocumentSnapshot<Map<String, dynamic>> doc = await usersColl
+          .doc(uid)
+          .get()
+          .timeout(const Duration(seconds: 6));
+      if (!doc.exists) {
+        doc = await upperUsersColl
+            .doc(uid)
+            .get()
+            .timeout(const Duration(seconds: 6));
       }
-      final snap =
-          await FirebaseFirestore.instance.collection('users').doc(uid).get();
-      final data = snap.data() ?? {};
+
+      if (!mounted) return;
+      final data = doc.data() ?? {};
       setState(() {
-        name = (data['name'] ??
-                data['fullName'] ??
-                data['staffName'] ??
-                data['email'] ??
-                name)
-            .toString();
-        staffId = (data['staffId'] ?? data['userID'] ?? staffId).toString();
-        role = (data['role'] ?? role).toString();
-        email = (data['email'] ?? email).toString();
-        joinDate = (data['joinDate'] ?? joinDate).toString();
-        status = (data['status'] ?? status).toString();
-        _loadingProfile = false;
+        name =
+            (data['displayName'] as String?) ??
+            (data['name'] as String?) ??
+            (data['fullName'] as String?) ??
+            (user.displayName ??
+                (user.email != null ? user.email!.split('@')[0] : 'Unknown'));
+        email = (data['email'] as String?) ?? (user.email ?? '--');
+        staffId =
+            (data['employeeId'] as String?) ??
+            (data['staffId'] as String?) ??
+            '--';
+        role = (data['role'] as String?) ?? '--';
+        joinDate = _resolveJoinDate(data, user);
+        status = (data['status'] as String?) ?? 'Active';
       });
+
+      // Load initial history page
+      await _loadHistoryPage();
     } catch (e) {
-      setState(() {
-        _loadingProfile = false;
-        _profileError = 'Failed to load profile';
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Failed to load profile';
+        });
+      }
+      // Do not crash; show message
+    } finally {
+      if (mounted) {
+        setState(() {
+          _profileLoading = false;
+        });
+      }
     }
   }
 
-  Future<void> _loadHistory() async {
-    setState(() {
-      _loadingHistory = true;
-      _historyError = null;
-    });
+  Future<void> _loadHistoryPage() async {
+    if (_historyLoading || !_hasMoreHistory) return;
+    setState(() => _historyLoading = true);
+
     try {
-      final records = await _attendanceDb.getAllAttendance();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('User not signed in');
+      final uid = user.uid;
+
+      Query q = FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('attendance')
+          .orderBy('date', descending: true)
+          .limit(_pageSize);
+
+      if (_lastHistoryDoc != null) q = q.startAfterDocument(_lastHistoryDoc!);
+
+      final snap = await q.get().timeout(const Duration(seconds: 6));
+      if (!mounted) return;
+
+      final docs = snap.docs;
+      if (docs.isEmpty) {
+        setState(() => _hasMoreHistory = false);
+        return;
+      }
+
+      final newRecords = docs.map((d) {
+        final data = d.data();
+        return AttendanceRecord.fromMap(data as Map<String, dynamic>, d.id);
+      }).toList();
+
       setState(() {
-        _history = records;
-        _loadingHistory = false;
+        _history.addAll(newRecords);
+        _lastHistoryDoc = docs.last;
+        if (docs.length < _pageSize) _hasMoreHistory = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _loadingHistory = false;
-        _historyError = 'Could not load attendance history.';
+        _errorMessage = 'Failed to load history';
       });
-    }
-  }
-
-  void _openEditProfile() {
-    // Edit UI removed per request
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'Present':
-        return Colors.green;
-      case 'Absent':
-        return Colors.red;
-      case 'Late':
-        return Colors.yellow[700]!;
-      default:
-        return Colors.grey;
+    } finally {
+      if (mounted) setState(() => _historyLoading = false);
     }
   }
 
   String _initials(String fullName) {
-    final parts = fullName.split(' ');
-    if (parts.length == 1) return parts[0][0];
+    if (fullName.isEmpty) return '?';
+    final parts = fullName.trim().split(' ');
+    if (parts.length == 1) return parts[0][0].toUpperCase();
     return (parts[0][0] + parts[1][0]).toUpperCase();
   }
 
-  String _formatDate(DateTime date) {
+  String _formatDate(DateTime d) {
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '${d.year}-$m-$day';
+  }
+
+  DateTime? _parseDynamicDate(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    if (v is Timestamp) return v.toDate();
+    if (v is String) {
+      try {
+        return DateTime.parse(v);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  String _prettyDate(DateTime d) {
     const months = [
       '',
       'Jan',
@@ -130,7 +191,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'Nov',
       'Dec',
     ];
-    return '${months[date.month]} ${date.day}, ${date.year}';
+    return '${months[d.month]} ${d.day}, ${d.year}';
+  }
+
+  String _resolveJoinDate(Map<String, dynamic> data, User user) {
+    // Priority: explicit joinDate -> createdAt -> auth creationTime -> '--'
+    final jd = _parseDynamicDate(data['joinDate']);
+    if (jd != null) return _prettyDate(jd);
+
+    final created = _parseDynamicDate(data['createdAt']);
+    if (created != null) return _prettyDate(created);
+
+    final metaCreated = user.metadata.creationTime;
+    if (metaCreated != null) return _prettyDate(metaCreated);
+
+    return '--';
   }
 
   DateTime? _parseTimeString(String? timeStr) {
@@ -165,255 +240,209 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
+      appBar: AppBar(
+        title: const Text('Profile'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _profileLoading ? null : () => _loadProfileSafely(),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          _lastHistoryDoc = null;
+          _history.clear();
+          _hasMoreHistory = true;
+          await _loadProfileSafely();
+        },
         child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
           child: Padding(
-            padding: EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Header
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Profile',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        if (_loadingProfile)
-                          const SizedBox(
-                            height: 16,
-                            child: LinearProgressIndicator(),
-                          )
-                        else if (_profileError != null)
-                          Text(
-                            _profileError!,
-                            style: TextStyle(
-                              color: Colors.red[700],
-                              fontSize: 14,
-                            ),
-                          )
-                        else
-                          Text(
-                            'Manage your account',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 14,
-                            ),
-                          ),
-                      ],
-                    ),
-                    // Edit removed per request
-                  ],
-                ),
-                SizedBox(height: 24),
-
-                // Profile Card with Avatar
+                // Profile card
                 Container(
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey[200]!),
+                    border: Border.all(color: Colors.grey.shade200),
                   ),
-                  padding: EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+                  child: Row(
                     children: [
-                      // Avatar
                       CircleAvatar(
-                        radius: 50,
+                        radius: 36,
                         backgroundColor: Colors.yellow[400],
                         child: Text(
                           _initials(name),
-                          style: TextStyle(
-                            fontSize: 32,
+                          style: const TextStyle(
+                            fontSize: 20,
                             fontWeight: FontWeight.bold,
-                            color: Colors.black87,
                           ),
                         ),
                       ),
-                      SizedBox(height: 16),
-                      // Name
-                      Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      // Role
-                      Text(
-                        role,
-                        style: TextStyle(color: Colors.grey[700], fontSize: 14),
-                      ),
-                      SizedBox(height: 12),
-                      // Status Badge
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green[100],
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          status,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.green[700],
-                          ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              role,
+                              style: TextStyle(color: Colors.grey[700]),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              email,
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
-                SizedBox(height: 20),
+                const SizedBox(height: 16),
 
-                // Account Information Card
+                // Account info
                 Container(
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey[200]!),
+                    border: Border.all(color: Colors.grey.shade200),
                   ),
-                  padding: EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Account Information',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      SizedBox(height: 16),
-                      _infoRow(Icons.person, 'Employee ID', staffId),
-                      SizedBox(height: 12),
-                      _infoRow(Icons.email, 'Email', email),
-                      SizedBox(height: 12),
-                      // Phone/Department removed per request
-                      _infoRow(Icons.calendar_today, 'Join Date', joinDate),
-                    ],
-                  ),
-                ),
-                SizedBox(height: 20),
-
-                // Attendance History Card
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey[200]!),
-                  ),
-                  padding: EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Attendance History',
+                      const Text(
+                        'Account Information',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 14,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      SizedBox(height: 12),
-                      if (_loadingHistory)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 8),
-                          child: Center(child: CircularProgressIndicator()),
-                        )
-                      else if (_historyError != null)
-                        Text(
-                          _historyError!,
-                          style: TextStyle(color: Colors.red[700]),
+                      const SizedBox(height: 8),
+                      _infoRow(Icons.badge, 'Employee ID', staffId),
+                      const SizedBox(height: 6),
+                      _infoRow(Icons.calendar_today, 'Join Date', joinDate),
+                      const SizedBox(height: 6),
+                      _infoRow(Icons.info, 'Status', status),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Error or loading indicator
+                if (_errorMessage != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red[50],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _errorMessage!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+
+                // Attendance history
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Attendance History',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_history.isEmpty && _historyLoading)
+                        const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(12),
+                            child: CircularProgressIndicator(),
+                          ),
                         )
                       else if (_history.isEmpty)
-                        Text(
-                          'No records available.',
-                          style: TextStyle(color: Colors.grey[600]),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(
+                            'No recent records. Pull to refresh or tap load.',
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
                         )
                       else
                         ListView.separated(
-                          shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
+                          shrinkWrap: true,
                           itemCount: _history.length,
-                          separatorBuilder: (context, index) =>
-                              const Divider(height: 16),
-                          itemBuilder: (context, index) {
-                            final record = _history[index];
-                            final statusColor = _getStatusColor(record.status);
-
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                          separatorBuilder: (_, __) =>
+                              const Divider(height: 12),
+                          itemBuilder: (context, i) {
+                            final rec = _history[i];
+                            return Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      _formatDate(record.date),
+                                      _formatDate(rec.date),
                                       style: const TextStyle(
-                                        fontSize: 14,
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: statusColor.withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(
-                                        record.status,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: statusColor,
-                                        ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${rec.checkInTime ?? '--'} • ${rec.checkOutTime ?? '--'}',
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 13,
                                       ),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 6),
-                                Row(
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
-                                    Icon(
-                                      Icons.schedule,
-                                      size: 16,
-                                      color: Colors.grey[600],
-                                    ),
-                                    const SizedBox(width: 6),
                                     Text(
-                                      (record.checkInTime != null &&
-                                              record.checkOutTime != null)
-                                          ? '${record.checkInTime} - ${record.checkOutTime}'
-                                          : 'N/A',
+                                      rec.status,
                                       style: TextStyle(
-                                        color: Colors.grey[700],
-                                        fontSize: 12,
+                                        color: _getStatusColor(rec.status),
+                                        fontWeight: FontWeight.w700,
                                       ),
                                     ),
-                                    const Spacer(),
+                                    const SizedBox(height: 4),
                                     Text(
-                                      _workingHours(record),
+                                      _workingHours(rec),
                                       style: const TextStyle(
                                         fontSize: 12,
-                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey,
                                       ),
                                     ),
                                   ],
@@ -422,30 +451,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             );
                           },
                         ),
+
+                      const SizedBox(height: 8),
+                      if (_hasMoreHistory)
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton(
+                            onPressed: _historyLoading
+                                ? null
+                                : () => _loadHistoryPage(),
+                            child: _historyLoading
+                                ? const SizedBox(
+                                    height: 18,
+                                    width: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Text('Load more'),
+                          ),
+                        ),
                     ],
                   ),
                 ),
-                SizedBox(height: 24),
 
-                // Logout Button
+                const SizedBox(height: 24),
+
+                // Logout button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.yellow[600],
                       foregroundColor: Colors.black,
-                      padding: EdgeInsets.symmetric(vertical: 14),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    onPressed: () {
-                      Navigator.pushReplacementNamed(context, '/');
+                    onPressed: () async {
+                      final navigator = Navigator.of(context);
+                      await FirebaseAuth.instance.signOut();
+                      if (!mounted) return;
+                      navigator.pushReplacementNamed('/');
                     },
-                    child: Text(
+                    child: const Text(
                       'Logout',
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
                 ),
-                SizedBox(height: 20),
               ],
             ),
           ),
@@ -457,23 +509,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _infoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 20, color: Colors.grey[600]),
-        SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
-            SizedBox(height: 2),
-            Text(
-              value,
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-            ),
-          ],
+        Icon(icon, size: 18, color: Colors.grey[600]),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'Present':
+        return Colors.green;
+      case 'Absent':
+        return Colors.red;
+      case 'Late':
+        return Colors.orange;
+      default:
+        return Colors.grey;
+    }
   }
 }

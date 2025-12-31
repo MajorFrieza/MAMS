@@ -49,7 +49,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
     super.initState();
     _loadStaff();
     _loadLeaveRequests();
-}
+  }
 
   Future<void> _loadStaff() async {
     setState(() {
@@ -65,12 +65,13 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
           .map(
             (d) => _StaffOption(
               id: d.id,
-              name: (d.data()['name'] ??
-                      d.data()['fullName'] ??
-                      d.data()['staffName'] ??
-                      d.data()['email'] ??
-                      'Unknown')
-                  .toString(),
+              name:
+                  (d.data()['name'] ??
+                          d.data()['fullName'] ??
+                          d.data()['staffName'] ??
+                          d.data()['email'] ??
+                          'Unknown')
+                      .toString(),
               staffId: (d.data()['staffId'] ?? d.data()['userID'] ?? '')
                   .toString(),
             ),
@@ -133,7 +134,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                 )
               else
                 DropdownButtonFormField<_StaffOption>(
-                  value: selectedStaff,
+                  initialValue: selectedStaff,
                   hint: const Text('Select staff'),
                   items: _staffOptions
                       .map(
@@ -226,49 +227,52 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
                     .collection('users')
                     .doc(selectedStaffId!);
 
-                staffRef.get().then((staffDoc) async {
-                  if (!staffDoc.exists) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Staff not found')),
-                      );
-                    }
-                    return;
-                  }
+                staffRef
+                    .get()
+                    .then((staffDoc) async {
+                      if (!staffDoc.exists) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Staff not found')),
+                          );
+                        }
+                        return;
+                      }
 
-                  final currentBalances =
-                      (staffDoc.data()?['leaveBalances'] as Map?) ?? {};
-                  final currentDays =
-                      (currentBalances[selectedLeaveType] as int?) ?? 0;
+                      final currentBalances =
+                          (staffDoc.data()?['leaveBalances'] as Map?) ?? {};
+                      final currentDays =
+                          (currentBalances[selectedLeaveType] as int?) ?? 0;
 
-                  await staffRef.set({
-                    'leaveBalances': {
-                      ...currentBalances,
-                      selectedLeaveType!: currentDays + days,
-                    },
-                  }, SetOptions(merge: true));
+                      await staffRef.set({
+                        'leaveBalances': {
+                          ...currentBalances,
+                          selectedLeaveType!: currentDays + days,
+                        },
+                      }, SetOptions(merge: true));
 
-                  if (mounted) {
-                    Navigator.of(context).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Added $days $selectedLeaveType days for ${selectedStaff?.displayName ?? selectedStaffId}',
-                        ),
-                      ),
-                    );
-                  }
-                }).catchError((e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error: $e')),
-                    );
-                  }
-                });
+                      if (mounted) {
+                        Navigator.of(context).pop();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Added $days $selectedLeaveType days for ${selectedStaff?.displayName ?? selectedStaffId}',
+                            ),
+                          ),
+                        );
+                      }
+                    })
+                    .catchError((e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+                      }
+                    });
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error: $e')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('Error: $e')));
               }
             },
             child: const Text('Add Balance'),
@@ -277,6 +281,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
       ),
     );
   }
+
   void _loadLeaveRequests() {
     // Subscribe to all leave requests from all users
     _leaveRequestsSub = FirebaseFirestore.instance
@@ -382,13 +387,14 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
         final balanceKey = leaveType.contains('annual')
             ? 'Annual'
             : leaveType.contains('compassionate')
-                ? 'Compassionate'
-                : 'Annual';
-        final userRef =
-            FirebaseFirestore.instance.collection('users').doc(staffId);
+            ? 'Compassionate'
+            : 'Annual';
+        final userRef = FirebaseFirestore.instance
+            .collection('users')
+            .doc(staffId);
         await FirebaseFirestore.instance.runTransaction((txn) async {
           final snap = await txn.get(userRef);
-          final data = snap.data() as Map<String, dynamic>? ?? {};
+          final data = snap.data() ?? {};
           final balances = (data['leaveBalances'] as Map?) ?? {};
           final current = (balances[balanceKey] as int?) ?? 0;
           final updated = current - days;
@@ -396,7 +402,7 @@ class _AdminLeaveScreenState extends State<AdminLeaveScreen> {
             'leaveBalances': {
               ...balances,
               balanceKey: updated < 0 ? 0 : updated,
-            }
+            },
           });
         });
       }
@@ -982,12 +988,7 @@ class _StaffOption {
   final String staffId;
   final String name;
 
-  _StaffOption({
-    required this.id,
-    required this.staffId,
-    required this.name,
-  });
+  _StaffOption({required this.id, required this.staffId, required this.name});
 
-  String get displayName =>
-      staffId.isNotEmpty ? '$name (ID: $staffId)' : name;
+  String get displayName => staffId.isNotEmpty ? '$name (ID: $staffId)' : name;
 }

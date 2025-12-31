@@ -51,8 +51,9 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
       final usersColl = FirebaseFirestore.instance.collection('users');
       final upperUsersColl = FirebaseFirestore.instance.collection('Users');
 
-      DocumentSnapshot<Map<String, dynamic>> snap =
-          await usersColl.doc(uid).get();
+      DocumentSnapshot<Map<String, dynamic>> snap = await usersColl
+          .doc(uid)
+          .get();
       if (!snap.exists) {
         snap = await upperUsersColl.doc(uid).get();
       }
@@ -61,7 +62,10 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
 
       setState(() {
         _adminName =
-            (data['name'] ?? data['fullName'] ?? data['adminName'] ?? _adminName)
+            (data['name'] ??
+                    data['fullName'] ??
+                    data['adminName'] ??
+                    _adminName)
                 .toString();
         _adminEmail = (data['email'] ?? _adminEmail).toString();
         _adminId = (data['adminId'] ?? data['adminID'] ?? _adminId).toString();
@@ -166,9 +170,7 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                         email.isEmpty ||
                         password.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Please fill all fields'),
-                        ),
+                        const SnackBar(content: Text('Please fill all fields')),
                       );
                       return;
                     }
@@ -188,9 +190,9 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                       setState(() {
                         _creatingStaff = false;
                       });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(result)),
-                      );
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text(result)));
                     }
                   },
             child: _creatingStaff
@@ -228,17 +230,23 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
         return 'Failed to create user.';
       }
 
+      // Set displayName on the newly created auth user in the secondary app
+      try {
+        if (cred.user != null) {
+          await cred.user!.updateDisplayName(name);
+        }
+      } catch (_) {}
+
       await FirebaseFirestore.instance.collection('users').doc(uid).set({
         'name': name,
+        'displayName': name,
         'staffId': staffId,
         'email': email,
         'role': 'staff',
         'status': 'Active',
         'createdAt': DateTime.now().toIso8601String(),
-        'leaveBalances': {
-          'Annual': 0,
-          'Compassionate': 0,
-        },
+        'joinDate': DateTime.now().toIso8601String(),
+        'leaveBalances': {'Annual': 0, 'Compassionate': 0},
       }, SetOptions(merge: true));
 
       await auth.signOut();
@@ -268,12 +276,13 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
             .map(
               (d) => _StaffOption(
                 uid: d.id,
-                name: (d.data()['name'] ??
-                        d.data()['fullName'] ??
-                        d.data()['staffName'] ??
-                        d.data()['email'] ??
-                        'Unknown')
-                    .toString(),
+                name:
+                    (d.data()['name'] ??
+                            d.data()['fullName'] ??
+                            d.data()['staffName'] ??
+                            d.data()['email'] ??
+                            'Unknown')
+                        .toString(),
                 staffId: (d.data()['staffId'] ?? d.data()['userID'] ?? '')
                     .toString(),
               ),
@@ -290,6 +299,7 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
     // Load before showing dialog so initial state renders
     await loadStaff();
 
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -319,7 +329,7 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                               error = null;
                             });
                             await loadStaff();
-                             setStateDialog(() {});
+                            setStateDialog(() {});
                           },
                           child: const Text('Retry'),
                         ),
@@ -327,7 +337,7 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                     )
                   else
                     DropdownButtonFormField<_StaffOption>(
-                      value: selectedStaff,
+                      initialValue: selectedStaff,
                       hint: const Text('Select a staff member'),
                       isExpanded: true,
                       items: staffOptions
@@ -365,8 +375,9 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                   backgroundColor: selectedStaff == null
                       ? Colors.red.shade100
                       : Colors.red.shade400,
-                  foregroundColor:
-                      selectedStaff == null ? Colors.red.shade300 : Colors.white,
+                  foregroundColor: selectedStaff == null
+                      ? Colors.red.shade300
+                      : Colors.white,
                   minimumSize: const Size(double.infinity, 44),
                 ),
                 onPressed: _deletingStaff
@@ -390,9 +401,9 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                           setState(() {
                             _deletingStaff = false;
                           });
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(msg)),
-                          );
+                          ScaffoldMessenger.of(
+                            context,
+                          ).showSnackBar(SnackBar(content: Text(msg)));
                         }
                       },
                 child: _deletingStaff
@@ -413,8 +424,9 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
   Future<String> _deleteStaffAccount(_StaffOption staff) async {
     try {
       // Delete attendance subcollection
-      final userRef =
-          FirebaseFirestore.instance.collection('users').doc(staff.uid);
+      final userRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(staff.uid);
       final attendanceSnap = await userRef.collection('attendance').get();
       for (final doc in attendanceSnap.docs) {
         await doc.reference.delete();
@@ -494,7 +506,10 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
                     const SizedBox(height: 4),
                     Text(
                       _role.isNotEmpty ? _role : 'System Administrator',
-                      style: const TextStyle(fontSize: 14, color: Colors.black54),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.black54,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Container(
@@ -732,12 +747,7 @@ class _StaffOption {
   final String staffId;
   final String name;
 
-  _StaffOption({
-    required this.uid,
-    required this.staffId,
-    required this.name,
-  });
+  _StaffOption({required this.uid, required this.staffId, required this.name});
 
-  String get displayName =>
-      staffId.isNotEmpty ? '$name (ID: $staffId)' : name;
+  String get displayName => staffId.isNotEmpty ? '$name (ID: $staffId)' : name;
 }

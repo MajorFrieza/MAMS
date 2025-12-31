@@ -40,20 +40,22 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     try {
       final firestore = FirebaseFirestore.instance;
 
-      // Fetch staff users
+      // Fetch only first 100 staff users to avoid overloading
       final usersSnap = await firestore
           .collection('users')
           .where('role', isEqualTo: 'staff')
+          .limit(100)
           .get();
       final staffUsers = <String, _StaffAttendance>{};
       for (final doc in usersSnap.docs) {
         final data = doc.data();
-        final name = (data['name'] ??
-                data['fullName'] ??
-                data['staffName'] ??
-                data['email'] ??
-                'Unknown')
-            .toString();
+        final name =
+            (data['name'] ??
+                    data['fullName'] ??
+                    data['staffName'] ??
+                    data['email'] ??
+                    'Unknown')
+                .toString();
         final staffId = (data['staffId'] ?? data['userID'] ?? '').toString();
         staffUsers[doc.id] = _StaffAttendance(
           userId: doc.id,
@@ -69,45 +71,65 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       final startOfDay = DateTime(now.year, now.month, now.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
-      // Attendance per user (avoids collection-group index)
+      // Batch queries: process in chunks of 10 to avoid blocking UI
       int present = 0;
       int late = 0;
+      final entries = staffUsers.entries.toList();
 
-      for (final entry in staffUsers.entries) {
-        final uid = entry.key;
-        final existing = entry.value;
-        final snap = await firestore
-            .collection('users')
-            .doc(uid)
-            .collection('attendance')
-            .where('date',
-                isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-            .where('date', isLessThan: Timestamp.fromDate(endOfDay))
-            .limit(1)
-            .get();
-
-        if (snap.docs.isEmpty) continue;
-
-        final data = snap.docs.first.data();
-        final status = (data['status'] ?? 'Present').toString();
-        final checkIn = data['checkInTime']?.toString();
-
-        final updated = _StaffAttendance(
-          userId: uid,
-          staffId: existing.staffId,
-          name: existing.name,
-          status: status,
-          note: checkIn != null ? 'Check-in: $checkIn' : 'No check-in recorded',
+      for (int i = 0; i < entries.length; i += 10) {
+        final chunk = entries.sublist(
+          i,
+          i + 10 > entries.length ? entries.length : i + 10,
         );
 
-        staffUsers[uid] = updated;
-        if (status.toLowerCase() == 'present') present++;
-        if (status.toLowerCase() == 'late') late++;
+        // Process this chunk in parallel
+        await Future.wait(
+          chunk.map((entry) async {
+            final uid = entry.key;
+            final existing = entry.value;
+            try {
+              final snap = await firestore
+                  .collection('users')
+                  .doc(uid)
+                  .collection('attendance')
+                  .where(
+                    'date',
+                    isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
+                  )
+                  .where('date', isLessThan: Timestamp.fromDate(endOfDay))
+                  .limit(1)
+                  .get();
+
+              if (snap.docs.isEmpty) return;
+
+              final data = snap.docs.first.data();
+              final status = (data['status'] ?? 'Present').toString();
+              final checkIn = data['checkInTime']?.toString();
+
+              final updated = _StaffAttendance(
+                userId: uid,
+                staffId: existing.staffId,
+                name: existing.name,
+                status: status,
+                note: checkIn != null
+                    ? 'Check-in: $checkIn'
+                    : 'No check-in recorded',
+              );
+
+              staffUsers[uid] = updated;
+              if (status.toLowerCase() == 'present') present++;
+              if (status.toLowerCase() == 'late') late++;
+            } catch (e) {
+              // ignore error for individual staff
+            }
+          }),
+        );
       }
 
       final totalStaff = staffUsers.length;
       final absent = totalStaff - (present + late);
 
+      if (!mounted) return;
       setState(() {
         _presentCount = present;
         _lateCount = late;
@@ -117,6 +139,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       });
     } catch (e) {
       debugPrint('Admin attendance load error: $e');
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _error = 'Failed to load attendance. ${e.toString()}';
@@ -172,8 +195,8 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                   _loading
                       ? 'Loading today...'
                       : _error != null
-                          ? _error!
-                          : 'Today',
+                      ? _error!
+                      : 'Today',
                   style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                 ),
                 const SizedBox(height: 20),
@@ -186,11 +209,11 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                     physics: const NeverScrollableScrollPhysics(),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 1.05,
-                    ),
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 1.05,
+                        ),
                     itemBuilder: (context, index) {
                       final cards = [
                         (
@@ -199,7 +222,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                           icon: Icons.check_circle,
                           iconColor: _textGreen600,
                           background: Colors.green.withValues(alpha: 0.1),
-                          filter: 'Present'
+                          filter: 'Present',
                         ),
                         (
                           value: _absentCount.toString(),
@@ -207,7 +230,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                           icon: Icons.cancel,
                           iconColor: _textRed600,
                           background: _bgRed50,
-                          filter: 'Absent'
+                          filter: 'Absent',
                         ),
                         (
                           value: _lateCount.toString(),
@@ -215,7 +238,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                           icon: Icons.access_time,
                           iconColor: Colors.orange,
                           background: _brandYellow.withValues(alpha: 0.18),
-                          filter: 'Late'
+                          filter: 'Late',
                         ),
                       ];
                       final item = cards[index];
@@ -224,8 +247,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                       return GestureDetector(
                         onTap: () {
                           setState(() {
-                            _selectedFilter =
-                                _selectedFilter == item.filter ? null : item.filter;
+                            _selectedFilter = _selectedFilter == item.filter
+                                ? null
+                                : item.filter;
                           });
                         },
                         child: _SummaryCard(
@@ -294,8 +318,10 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                             padding: const EdgeInsets.symmetric(vertical: 8.0),
                             child: Text(
                               'No staff records found for today.',
-                              style:
-                                  TextStyle(color: Colors.grey[700], fontSize: 13),
+                              style: TextStyle(
+                                color: Colors.grey[700],
+                                fontSize: 13,
+                              ),
                             ),
                           )
                         else
@@ -459,8 +485,8 @@ class _EmployeeTile extends StatelessWidget {
     final iconData = lowerStatus == 'present'
         ? Icons.check_circle
         : lowerStatus == 'late'
-            ? Icons.access_time
-            : Icons.cancel;
+        ? Icons.access_time
+        : Icons.cancel;
     return Row(
       children: [
         CircleAvatar(

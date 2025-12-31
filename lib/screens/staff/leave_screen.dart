@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-// removed unused import
-
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -133,24 +131,18 @@ class _LeaveScreenState extends State<LeaveScreen> {
           .collection('leaveRequests')
           .add(doc);
 
-      // add to local history for immediate feedback (balance remains until approval)
-      setState(() {
-        leaveHistory.insert(0, {
-          'dateRange': '${_formatDate(startDate)} - ${_formatDate(endDate)}',
-          'days': '$daysRequested day(s)',
-          'leaveType': selectedLeaveType,
-          'status': 'Pending',
-          'appliedDate': _formatDate(DateTime.now()),
-          'attachment': selectedFileName,
+      // Do not locally insert an optimistic copy — rely on the realtime
+      // Firestore listener to update `leaveHistory`. Just reset the form
+      // after the write completes to avoid temporary duplicate entries.
+      if (mounted) {
+        setState(() {
+          selectedLeaveType = null;
+          startDate = null;
+          endDate = null;
+          selectedFileName = null;
+          _selectedFile = null;
         });
-
-        // reset form
-        selectedLeaveType = null;
-        startDate = null;
-        endDate = null;
-        selectedFileName = null;
-        _selectedFile = null;
-      });
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
